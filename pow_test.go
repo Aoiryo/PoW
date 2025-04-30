@@ -215,7 +215,11 @@ func checkChainConvergence(t *testing.T, nodes []*Node) (converged bool, tipHash
 	}
 
 	// check if all nodes have same head block
+	nodes[0].Blockchain.mu.Lock()
+	defer nodes[0].Blockchain.mu.Unlock()
 	for i := 1; i < len(nodes); i++ {
+		nodes[i].Blockchain.mu.Lock()
+		defer nodes[i].Blockchain.mu.Unlock()
 		if nodes[i].Blockchain.Head.Block != nodes[0].Blockchain.Head.Block {
 			b := nodes[i].Blockchain.Head.Block
 			fmt.Printf("Node %d has head block: hash: %s, index: %d, data: %s, nonce: %d, prevHash: %s, time: %v.\n", i, b.Hash[:8], b.Index, b.Data, b.Nonce, b.PreHash, b.Timestamp)
@@ -230,9 +234,7 @@ func checkChainConvergence(t *testing.T, nodes []*Node) (converged bool, tipHash
 
 	headList := make([]*BlockNode, len(nodes))
 	for i, node := range nodes {
-		node.Blockchain.mu.Lock()
 		headList[i] = node.Blockchain.Head
-		node.Blockchain.mu.Unlock()
 	}
 
 	for {
@@ -312,6 +314,55 @@ func ConnectNodes(nodes []*Node, ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func nodesForkSetup(nodes []*Node) {
+	// Connect all nodes to each other
+	block1 := Block{
+		Index:     1,
+		Data:      "This is block1",
+		Nonce:     1,
+		PreHash:   nodes[0].Blockchain.Head.Block.Hash,
+		Timestamp: time.Now().Truncate(time.Minute).Round(0),
+	}
+	block1.Hash = block1.CalculateHash()
+
+	block2 := Block{
+		Index:     1,
+		Data:      "This is block2",
+		Nonce:     2,
+		PreHash:   nodes[0].Blockchain.Head.Block.Hash,
+		Timestamp: time.Now().Truncate(time.Minute).Round(0),
+	}
+	block2.Hash = block2.CalculateHash()
+
+	for i := 0; i < len(nodes); i++ {
+		block1Node := &BlockNode{
+			Block:    block1,
+			Parent:   nodes[i].Blockchain.Head,
+			Children: []*BlockNode{},
+			Height:   1,
+		}
+		block2Node := &BlockNode{
+			Block:    block2,
+			Parent:   nodes[i].Blockchain.Head,
+			Children: []*BlockNode{},
+			Height:   1,
+		}
+		nodes[i].Blockchain.mu.Lock()
+		nodes[i].Blockchain.Head.Children = append(nodes[i].Blockchain.Head.Children, block1Node, block2Node)
+		nodes[i].Blockchain.BlockIndex[block1.Hash] = block1Node
+		nodes[i].Blockchain.BlockIndex[block2.Hash] = block2Node
+		nodes[i].Blockchain.Tips[block1.Hash] = block1Node
+		nodes[i].Blockchain.Tips[block2.Hash] = block2Node
+		j := rand.Intn(2)
+		if j == 0 {
+			nodes[i].Blockchain.Head = block1Node
+		} else {
+			nodes[i].Blockchain.Head = block2Node
+		}
+		nodes[i].Blockchain.mu.Unlock()
+	}
 }
 
 // --- Test Cases ---
@@ -409,6 +460,7 @@ func TestMultiMinerBroadcastAndConvergence(t *testing.T) {
 
 	// --- Content Submission (only to miner) ---
 	log.Printf("[%s] Submitting initial content to 3 miner node randomly", t.Name())
+	// might generate forked blocks
 	numContents := 7
 	for i := 0; i < numContents; i++ {
 		for j := 0; j < 3; j++ {
@@ -421,10 +473,101 @@ func TestMultiMinerBroadcastAndConvergence(t *testing.T) {
 		}
 	}
 
+	// make sure the chain would be converge at last
+	numContents = 6
+	for i := 0; i < numContents; i++ {
+		minerNode := nodes[0]
+		content := fmt.Sprintf("SingleMinerTx-%d", i+1)
+		if err := minerNode.SubmitContent(content); err != nil {
+			t.Logf("[%s] Warning: SubmitContent failed for '%s' on miner node %s: %v", t.Name(), content, minerNode.Host.ID().ShortString(), err)
+		}
+	}
+
 	// --- Wait for Mining & Broadcast ---
 	totalWaitTime := 15 * time.Second
 	log.Printf("[%s] Waiting %v for miner node to mine %d blocks and broadcast...", t.Name(), totalWaitTime, numContents)
 	time.Sleep(totalWaitTime)
+
+	// --- Check Convergence ---
+	log.Printf("[%s] Checking for final convergence among all nodes...", t.Name())
+	converged, finalTip, finalHeight := waitForConvergence(t, nodes, 60*time.Second, 5*time.Second)
+
+	// --- Assertions (remain the same) ---
+	if !converged {
+		t.Errorf("[%s] Nodes failed to converge after single miner produced blocks.", t.Name())
+		// ... (log final state) ...
+		t.Fail()
+	} else {
+		if finalHeight < numContents {
+			t.Errorf("[%s] Converged, but final chain height (%d) is less than submitted contents (%d).", t.Name(), finalHeight, numContents)
+		} else {
+			t.Logf("[%s] Test Passed: All nodes converged after single miner produced blocks. Final Tip: %s... (H:%d)", t.Name(), finalTip[:8], finalHeight)
+		}
+	}
+}
+
+// Test Case 3: Fork Convergence
+func TestForkConvergence(t *testing.T) {
+	t.Parallel()
+	log.Println("--- TestForkConvergence ---")
+	discoveryTag := getTestDiscoveryTag(t)
+	numNodes := 20
+	ctx, cancel, nodes, err := setupTestNetwork(t, numNodes, discoveryTag) // setup 3 nodes
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer cancel()
+	defer func() { /* ... (defer cleanup remains the same) ... */ }()
+
+	if len(nodes) < numNodes {
+		t.Fatal("Test requires at least 3 nodes.") // Sanity check
+	}
+
+	// connect all nodes to each other
+	err = ConnectNodes(nodes, ctx)
+	if err != nil {
+		t.Fatalf("Failed to connect nodes: %v", err)
+	} else {
+		log.Printf("[%s] All nodes connected successfully.", t.Name())
+	}
+
+	nodesForkSetup(nodes)
+
+	// Allow a moment for connections and pubsub peer discovery over the new connections
+	log.Printf("[%s] Waiting briefly after manual connections...", t.Name())
+	time.Sleep(5 * time.Second)
+	// You could add explicit checks here using host.Network().Peers() again if needed
+
+	// --- Content Submission (only to miner) ---
+	log.Printf("[%s] Submitting initial content to 3 miner node randomly", t.Name())
+	// generating forked blocks
+	numContents := 70
+	for i := 0; i < numContents; i++ {
+		for j := 0; j < 3; j++ {
+			index := rand.Intn(numNodes)
+			minerNode := nodes[index]
+			content := fmt.Sprintf("MinerTx-%d", i+1)
+			if err := minerNode.SubmitContent(content); err != nil {
+				t.Logf("[%s] Warning: SubmitContent failed for '%s' on miner node %s: %v", t.Name(), content, minerNode.Host.ID().ShortString(), err)
+			}
+		}
+	}
+
+	// no forked blocks so the chain would be converge at last
+	numContents = 6
+	for i := 0; i < numContents; i++ {
+		minerNode := nodes[0]
+		content := fmt.Sprintf("SingleMinerTx-%d", i+1)
+		if err := minerNode.SubmitContent(content); err != nil {
+			t.Logf("[%s] Warning: SubmitContent failed for '%s' on miner node %s: %v", t.Name(), content, minerNode.Host.ID().ShortString(), err)
+		}
+	}
+
+	// --- Wait for Mining & Broadcast ---
+	// estimatedBlockTime := (miningWaitTime / 2) + syncWaitTime
+	// totalWaitTime := time.Duration(numContents+1) * estimatedBlockTime // Wait for numContents blocks + buffer
+	// log.Printf("[%s] Waiting %v for miner node to mine %d blocks and broadcast...", t.Name(), totalWaitTime, numContents)
+	time.Sleep(30 * time.Second)
 
 	// --- Check Convergence ---
 	log.Printf("[%s] Checking for final convergence among all nodes...", t.Name())

@@ -25,7 +25,7 @@ import (
 
 // --- Core Data Structures ---
 
-var difficulty = 4 // Difficulty level for PoW
+var difficulty = 1 // Difficulty level for PoW
 
 type transaction struct {
 	Content   string
@@ -265,7 +265,6 @@ func (b *Block) CalculateHash() string {
 	return fmt.Sprintf("%x", sha256.Sum256(blockBytes))
 }
 
-// check the timestamp as well?
 // removeFromMempool removes a content from the mempool
 func (n *Node) removeFromMempool(block Block) {
 	n.mu.Lock()
@@ -280,6 +279,8 @@ func (n *Node) removeFromMempool(block Block) {
 
 // if a new block is mined, the transaction is removed from the mempool but might Add block fail
 func (bc *Blockchain) AddBlock(block Block) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
 	log.Printf("Adding block %s at height %d with data: %s",
 		block.Hash[:8], block.Index, block.Data)
 
