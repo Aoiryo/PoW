@@ -22,7 +22,7 @@ import (
 
 // --- Core Data Structures ---
 
-var difficulty = 5 // Difficulty level for PoW
+var difficulty = 4 // Difficulty level for PoW
 
 type transaction struct {
 	Content   string
@@ -163,6 +163,7 @@ func (n *Node) miningLoop() {
 				} else if newBlock != nil {
 
 					addErr := n.Blockchain.AddBlock(*newBlock) // Add to own chain first
+					log.Printf("Node %s: Heads updated to %s added successfully to chain\n", n.Host.ID().ShortString(), n.Blockchain.Head.Block.Hash[:8])
 					if addErr != nil {
 						log.Printf("Node %s failed to add own mined block: %v\n", n.Host.ID().ShortString(), addErr)
 					} else {
@@ -238,7 +239,7 @@ func (bc *Blockchain) NewBlock(transaction transaction, nonce int) *Block {
 
 	block := &Block{
 		Index:     bc.Head.Height + 1,
-		Timestamp: time.Now(),
+		Timestamp: time.Now().Round(0),
 		Data:      transaction.Content,
 		PreHash:   bc.Head.Block.Hash,
 		Nonce:     nonce,
@@ -291,7 +292,7 @@ func (bc *Blockchain) AddBlock(block Block) error {
 		return fmt.Errorf("cannot add block to empty chain (genesis block should exist)")
 	}
 
-	if bc.isValidBlock(blocknode.Block) == false {
+	if !bc.isValidBlock(blocknode.Block) {
 		return fmt.Errorf("block %s is invalid", blocknode.Block.Hash)
 	}
 
@@ -317,9 +318,7 @@ func (bc *Blockchain) AddBlock(block Block) error {
 	}
 
 	// if it parents previously a tip, update the tips
-	if _, ok := bc.Tips[prevhash]; ok {
-		delete(bc.Tips, prevhash)
-	}
+	delete(bc.Tips, prevhash)
 	bc.Tips[blocknode.Block.Hash] = blocknode
 
 	return nil
@@ -426,7 +425,7 @@ func NewNode(ctx context.Context, listenPort int, discoveryTag string) (*Node, e
 	// 2. create Genesis Block (all nodes start with the same genesis)
 	genesisBlock := Block{
 		Index:     0,
-		Timestamp: time.Now(),
+		Timestamp: time.Date(2001, 1, 2, 23, 41, 11, 0, time.UTC),
 		Data:      "Genesis Block",
 		PreHash:   "",
 		Nonce:     0,
@@ -640,6 +639,7 @@ func (n *Node) pubsubHandler() {
 			// Block added successfully
 			log.Printf("Node %s: Block %s added successfully to chain\n",
 				n.Host.ID().ShortString(), receivedBlock.Hash[:8])
+			log.Printf("Node %s: Heads updated to %s added successfully to chain\n", n.Host.ID().ShortString(), n.Blockchain.Head.Block.Hash[:8])
 		}
 	}
 }
