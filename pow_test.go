@@ -43,11 +43,11 @@ func TestBlockchainSetup(t *testing.T) {
 	time.Sleep(15 * time.Second)
 
 	// check that the blockchain has grown
-	node.Blockchain.mu.RLock()
-	chainLen := len(node.Blockchain.Chain)
-	node.Blockchain.mu.RUnlock()
+	node.Blockchain.mu.Lock()
+	chainLen := node.Blockchain.Head.Height
+	node.Blockchain.mu.Unlock()
 
-	if chainLen <= 1 {
+	if chainLen == 0 {
 		t.Errorf("Expected chain to grow beyond genesis, but length is %d", chainLen)
 	} else {
 		t.Logf("Chain has grown to length %d", chainLen)

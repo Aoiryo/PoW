@@ -22,36 +22,50 @@ import (
 
 // --- Core Data Structures ---
 
-// BlockHeader defines the block header information
-type BlockHeader struct {
-	ParentHash string `json:"parentHash"`
-	MerkleRoot string `json:"merkleRoot"` // Simplified: can be the hash of the content
-	Timestamp  int64  `json:"timestamp"`
-	Difficulty int    `json:"difficulty"` // PoW difficulty target
-	Nonce      int64  `json:"nonce"`
-	Height     int    `json:"height"`
+var difficulty = 6 // Difficulty level for PoW
+
+type transaction struct {
+	Content   string
+	Timestamp time.Time
 }
 
-// Block defines the block structure
+type BlochToHash struct {
+	Index      int
+	Timestamp  time.Time
+	Data       string
+	PreHash    string
+	Nonce      int
+	Difficulty int
+}
+
 type Block struct {
-	Header  BlockHeader `json:"header"`
-	Content string      `json:"content"` // Simplified: should be a list of transactions in practice
-	Hash    string      `json:"hash"`    // Hash of the current block
+	Index     int
+	Timestamp time.Time
+	Data      string
+	PreHash   string
+	Nonce     int
+	Hash      string
 }
 
-// Blockchain defines the blockchain structure (maintained locally by each node)
+type BlockNode struct {
+	Block    Block
+	Parent   *BlockNode
+	Children []*BlockNode
+	Height   int
+}
+
 type Blockchain struct {
-	mu            sync.RWMutex
-	Chain         []Block
-	Mempool       []string         // Pending content (transactions)
-	blockIndex    map[string]int   // Maps block hash to its index in the Chain
-	pendingBlocks map[string]Block // Stores blocks that couldn't be added to the main chain yet
+	mu         sync.Mutex
+	BlockIndex map[string]*BlockNode
+	Tips       map[string]*BlockNode
+	Head       *BlockNode
 }
 
-// Node represents a node in the network (miner or client) using libp2p
 type Node struct {
+	mu             sync.Mutex
 	Host           host.Host
 	Blockchain     *Blockchain
+	Mempool        []transaction
 	PubSub         *pubsub.PubSub
 	BlockTopic     *pubsub.Topic
 	BlockSub       *pubsub.Subscription       // Added field for the subscription
@@ -62,105 +76,301 @@ type Node struct {
 	miningLoopWait sync.WaitGroup     // To wait for mining loop to finish
 }
 
+// // BlockHeader defines the block header information
+// type BlockHeader struct {
+// 	ParentHash string `json:"parentHash"`
+// 	MerkleRoot string `json:"merkleRoot"` // Simplified: can be the hash of the content
+// 	Timestamp  int64  `json:"timestamp"`
+// 	Difficulty int    `json:"difficulty"` // PoW difficulty target
+// 	Nonce      int64  `json:"nonce"`
+// 	Height     int    `json:"height"`
+// }
+
+// // Block defines the block structure
+// type Block struct {
+// 	Header  BlockHeader `json:"header"`
+// 	Content string      `json:"content"` // Simplified: should be a list of transactions in practice
+// 	Hash    string      `json:"hash"`    // Hash of the current block
+// }
+
+// // Blockchain defines the blockchain structure (maintained locally by each node)
+// type Blockchain struct {
+// 	mu            sync.RWMutex
+// 	Chain         []Block
+// 	Mempool       []string         // Pending content (transactions)
+// 	blockIndex    map[string]int   // Maps block hash to its index in the Chain
+// 	pendingBlocks map[string]Block // Stores blocks that couldn't be added to the main chain yet
+// }
+
+// // Node represents a node in the network (miner or client) using libp2p
+// type Node struct {
+// 	Host           host.Host
+// 	Blockchain     *Blockchain
+// 	PubSub         *pubsub.PubSub
+// 	BlockTopic     *pubsub.Topic
+// 	BlockSub       *pubsub.Subscription       // Added field for the subscription
+// 	Discovery      *drouting.RoutingDiscovery // Added field for discovery
+// 	Ctx            context.Context
+// 	cancel         context.CancelFunc // To allow stopping node-specific goroutines
+// 	DiscoveryTag   string             // Tag used for finding peers
+// 	miningLoopWait sync.WaitGroup     // To wait for mining loop to finish
+// }
+
 // --- Constants for libp2p ---
 const BlockProtocolID = "/blockchain/blocks/1.0.0"
 const BlockTopicName = "blockchain/blocks" // Using topic name as discovery tag
 
-// --- Blockchain Methods ---
+// --- Client Submission Methods ---
+// SubmitContent adds content to the node's mempool
+func (n *Node) SubmitContent(content string) error {
+	transaction := transaction{
+		Content:   content,
+		Timestamp: time.Now(),
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.Mempool = append(n.Mempool, transaction)
 
-// CalculateHash computes the hash of the block
-func (b *Block) CalculateHash() string {
-	headerBytes, _ := json.Marshal(b.Header)
-	return fmt.Sprintf("%x", sha256.Sum256(headerBytes))
+	log.Printf("Node %s added content to mempool: %s\n", n.Host.ID().ShortString(), content)
+	// broadcast transaction here via another PubSub topic or direct messages
+	return nil
+}
+
+// --- Blockchain Methods ---
+// miningLoop continuously attempts to mine new blocks
+// mine whenever mempool is not empty, with a small delay
+func (n *Node) miningLoop() {
+	defer n.miningLoopWait.Done()
+	log.Printf("Node %s started mining loop.", n.Host.ID().ShortString())
+
+	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			n.mu.Lock()
+			mempoolSize := len(n.Mempool)
+			n.mu.Unlock()
+
+			if mempoolSize > 0 {
+				log.Printf("Node %s attempting to mine a block (mempool size: %d)...\n", n.Host.ID().ShortString(), mempoolSize)
+				newBlock, err := n.MineBlock()
+				if err != nil {
+					if err.Error() != "mempool is empty" && err.Error() != "mining cancelled" {
+						log.Printf("Node %s mining error: %v\n", n.Host.ID().ShortString(), err)
+					}
+				} else if newBlock != nil {
+
+					addErr := n.Blockchain.AddBlock(*newBlock) // Add to own chain first
+					if addErr != nil {
+						log.Printf("Node %s failed to add own mined block: %v\n", n.Host.ID().ShortString(), addErr)
+					} else {
+						// Successfully added to own chain, remove from mempool
+						n.removeFromMempool(*newBlock)
+						// Broadcast the new block to other nodes
+						broadcastErr := n.BroadcastBlock(*newBlock) // Broadcast if added successfully
+						if broadcastErr != nil {
+							log.Printf("Node %s failed to broadcast block: %v\n", n.Host.ID().ShortString(), broadcastErr)
+						}
+					}
+				}
+			}
+		case <-n.Ctx.Done():
+			log.Printf("Node %s stopping mining loop due to context cancellation.\n", n.Host.ID().ShortString())
+			return
+		}
+	}
+}
+
+// MineBlock picks a random nonce and increases it to find a valid one
+func (n *Node) MineBlock() (*Block, error) {
+	// n.Blockchain.mu.RLock()
+	// if len(n.Blockchain.Mempool) == 0 {
+	// 	n.Blockchain.mu.RUnlock()
+	// 	return nil, fmt.Errorf("mempool is empty")
+	// }
+
+	targetPrefix := ""
+	for i := 0; i < difficulty; i++ {
+		targetPrefix += "0"
+	}
+
+	startTime := time.Now()
+	// set nonce as a random number to avoid collisions
+	nonce := rand.Int63n(1000000)
+	log.Printf("Node %s started mining...\n", n.Host.ID().ShortString())
+	for {
+		select {
+		case <-n.Ctx.Done():
+			log.Printf("Node %s mining cancelled.\n", n.Host.ID().ShortString())
+			return nil, fmt.Errorf("mining cancelled")
+		default:
+			n.mu.Lock()
+			transaction := n.Mempool[0]
+			n.mu.Unlock()
+
+			block := n.Blockchain.NewBlock(transaction, int(nonce))
+
+			hash := block.CalculateHash()
+			if hash[:difficulty] == targetPrefix {
+				block.Hash = hash
+				duration := time.Since(startTime)
+				log.Printf("Node %s found block! Hash: %s..., Nonce: %d, Time: %s\n", n.Host.ID().ShortString(), hash[:8], nonce, duration)
+
+				n.mu.Lock()
+				n.Mempool = n.Mempool[1:] // Remove the mined transaction from mempool
+				n.mu.Unlock()
+				n.Blockchain.mu.Lock()
+
+				return block, nil
+			}
+			nonce++
+		}
+	}
+
 }
 
 // NewBlock creates a new block (called after successful mining)
-func NewBlock(content string, parentBlock Block, difficulty int) *Block {
-	header := BlockHeader{
-		ParentHash: parentBlock.Hash,
-		MerkleRoot: fmt.Sprintf("%x", sha256.Sum256([]byte(content))), // Simplified
-		Timestamp:  time.Now().Unix(),
-		Difficulty: difficulty,
-		Nonce:      0,
-		Height:     parentBlock.Header.Height + 1, // Set height based on parent
-	}
+func (bc *Blockchain) NewBlock(transaction transaction, nonce int) *Block {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
 	block := &Block{
-		Header:  header,
-		Content: content,
+		Index:     bc.Head.Height + 1,
+		Timestamp: time.Now(),
+		Data:      transaction.Content,
+		PreHash:   bc.Head.Block.Hash,
+		Nonce:     nonce,
 	}
 	return block
 }
 
-// removeFromMempool removes a content from the mempool
-func removeFromMempool(mempool []string, content string) []string {
-	for i, c := range mempool {
-		if c == content {
-			return append(mempool[:i], mempool[i+1:]...)
-		}
+// CalculateHash computes the hash of the block
+func (b *Block) CalculateHash() string {
+
+	blockToHash := BlochToHash{
+		Index:      b.Index,
+		Timestamp:  b.Timestamp,
+		Data:       b.Data,
+		PreHash:    b.PreHash,
+		Nonce:      b.Nonce,
+		Difficulty: difficulty,
 	}
-	return mempool
+
+	blockBytes, _ := json.Marshal(blockToHash)
+	return fmt.Sprintf("%x", sha256.Sum256(blockBytes))
 }
 
-// AddBlock adds a block to the local chain
+// check the timestamp as well?
+// removeFromMempool removes a content from the mempool
+func (n *Node) removeFromMempool(block Block) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for i, c := range n.Mempool {
+		if c.Content == block.Data && c.Timestamp == block.Timestamp {
+			n.Mempool = append(n.Mempool[:i], n.Mempool[i+1:]...)
+			break
+		}
+	}
+}
+
+// if a new block is mined, the transaction is removed from the mempool but might Add block fail
 func (bc *Blockchain) AddBlock(block Block) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	if len(bc.Chain) == 0 {
+	blocknode := &BlockNode{
+		Block:    block,
+		Parent:   bc.BlockIndex[block.PreHash],
+		Children: []*BlockNode{},
+		Height:   block.Index,
+	}
+
+	if len(bc.BlockIndex) == 0 {
 		return fmt.Errorf("cannot add block to empty chain (genesis block should exist)")
 	}
 
-	// check if the block extends the current chain tip
-	parentBlock := bc.Chain[len(bc.Chain)-1]
-	if block.Header.ParentHash != parentBlock.Hash {
-		// block doesn't extend current tip - could be fork or orphan
-		// check if we know about the parent block
-		_, parentExists := bc.blockIndex[block.Header.ParentHash]
-		if !parentExists {
-			// we don't know about the parent - store in pending
-			bc.pendingBlocks[block.Hash] = block
-			return fmt.Errorf("unknown parent block: %s", block.Header.ParentHash)
-		}
-
-		// parent exists but isn't the tip - potential fork point
-		// this will be handled by the ResolveFork function
-		return fmt.Errorf("block doesn't extend current tip (fork point detected)")
+	if bc.isValidBlock(blocknode.Block) == false {
+		return fmt.Errorf("block %s is invalid", blocknode.Block.Hash)
 	}
 
-	if !bc.isValidBlock(block) { // Call validation method
-		return fmt.Errorf("invalid block received: %s...", block.Hash[:8])
+	prevhash := blocknode.Block.PreHash
+	// if prevhash is not in the chain, it's invalid
+	if _, ok := bc.BlockIndex[prevhash]; !ok {
+		return fmt.Errorf("block %s is invalid (parent block not found)", blocknode.Block.Hash)
 	}
 
-	// add valid block to chain
-	bc.Chain = append(bc.Chain, block)
-	bc.blockIndex[block.Hash] = len(bc.Chain) - 1
+	// if block with same data and timestamp exists, it's a duplicate
+	if !bc.DeDuplicate(blocknode) {
+		return fmt.Errorf("block %s is a duplicate", blocknode.Block.Hash)
+	}
 
-	// TODO: clean up Mempool for confirmed content
-	bc.Mempool = removeFromMempool(bc.Mempool, block.Content)
+	// if prevhash is in the chain and not a duplicate, add it to the chain
+	bc.BlockIndex[prevhash].Children = append(bc.BlockIndex[prevhash].Children, blocknode)
+	bc.BlockIndex[blocknode.Block.Hash] = blocknode
+	blocknode.Parent = bc.BlockIndex[prevhash]
 
-	log.Printf("Block %s... (H:%d) added to the chain.\n", block.Hash[:8], block.Header.Height)
+	// if it updated the longest chain, update the head
+	if blocknode.Height > bc.Head.Height {
+		bc.Head = blocknode
+	}
+
+	// if it parents previously a tip, update the tips
+	if _, ok := bc.Tips[prevhash]; ok {
+		delete(bc.Tips, prevhash)
+	}
+	bc.Tips[blocknode.Block.Hash] = blocknode
+
 	return nil
+}
+
+func (bc *Blockchain) ChainPruning() {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	dummyHead := bc.Head
+	longestblockchaine := make(map[string]*BlockNode)
+	for {
+		longestblockchaine[dummyHead.Block.Hash] = dummyHead
+		if dummyHead.Parent == nil {
+			break
+		}
+		dummyHead = dummyHead.Parent
+	}
+
+	longestHeight := bc.Head.Height
+	for _, tipNode := range bc.Tips {
+		if tipNode.Height < longestHeight-6 {
+			dummyTip := tipNode
+			for {
+				if _, ok := longestblockchaine[dummyTip.Block.Hash]; ok {
+					break
+				}
+				delete(bc.BlockIndex, dummyTip.Block.Hash)
+				delete(bc.Tips, dummyTip.Block.Hash)
+				dummyTipParent := dummyTip.Parent
+				for i, child := range dummyTip.Parent.Children {
+					if child.Block.Hash == dummyTip.Block.Hash {
+						dummyTip.Parent.Children = append(dummyTip.Parent.Children[:i], dummyTip.Parent.Children[i+1:]...)
+						break
+					}
+				}
+				dummyTip = dummyTipParent
+			}
+		}
+	}
 }
 
 // isValidBlock validates a single block relative to the current chain state
 func (bc *Blockchain) isValidBlock(block Block) bool {
-	if len(bc.Chain) == 0 {
-		log.Println("Validation Warning: Cannot validate against empty chain.")
-		// this check might be redundant if AddBlock already checks len > 0
-		return false
-	}
-	parentBlock := bc.Chain[len(bc.Chain)-1]
-	if block.Header.ParentHash != parentBlock.Hash {
-		log.Printf("Validation Error: Parent hash mismatch. Expected %s..., got %s...\n", parentBlock.Hash[:8], block.Header.ParentHash[:8])
-		return false
-	}
 
 	targetPrefix := ""
-	for i := 0; i < block.Header.Difficulty; i++ {
+	for i := 0; i < difficulty; i++ {
 		targetPrefix += "0"
 	}
 	calculatedHash := block.CalculateHash()
-	if calculatedHash != block.Hash || calculatedHash[:block.Header.Difficulty] != targetPrefix {
+	if calculatedHash != block.Hash || calculatedHash[:difficulty] != targetPrefix {
 		log.Printf("Validation Error: PoW or Hash mismatch for block %s...\n", block.Hash[:8])
 		return false
 	}
@@ -168,125 +378,36 @@ func (bc *Blockchain) isValidBlock(block Block) bool {
 	return true
 }
 
-// isBlockValidIntrinsic validates a block against a specified parent block
-// This is useful during fork resolution when we need to validate against
-// a specific parent rather than the chain tip
-func (bc *Blockchain) isBlockValidIntrinsic(block Block, parentBlock Block) bool {
-	// validate parent hash
-	if block.Header.ParentHash != parentBlock.Hash {
-		log.Printf("Validation Error: Parent hash mismatch. Expected %s..., got %s...\n", parentBlock.Hash[:8], block.Header.ParentHash[:8])
-		return false
-	}
-
-	// validate height is one more than parent
-	if block.Header.Height != parentBlock.Header.Height+1 {
-		log.Printf("Validation Error: Height mismatch. Expected %d, got %d\n", parentBlock.Header.Height+1, block.Header.Height)
-		return false
-	}
-
-	// validate PoW
-	targetPrefix := ""
-	for i := 0; i < block.Header.Difficulty; i++ {
-		targetPrefix += "0"
-	}
-	calculatedHash := block.CalculateHash()
-	if calculatedHash != block.Hash || calculatedHash[:block.Header.Difficulty] != targetPrefix {
-		log.Printf("Validation Error: PoW or Hash mismatch for block %s...\n", block.Hash[:8])
-		return false
-	}
-
-	// additional validations could include:
-	// - timestamp validations (block time can't be too far in future)
-	// - content validations
-	// - signature validations (for PoS chains, maybe we don't need this)
-
-	return true
-}
-
-// IsValidChain validates an entire chain structure (e.g., a received chain)
-func (bc *Blockchain) IsValidChain(chain []Block) bool {
-	if len(chain) == 0 {
-		return false
-	}
-	// TODO: Validate Genesis Block
-
-	for i := 1; i < len(chain); i++ {
-		currentBlock := chain[i]
-		prevBlock := chain[i-1]
-		if currentBlock.Header.ParentHash != prevBlock.Hash {
-			return false
+func (bc *Blockchain) DeDuplicate(blocknode *BlockNode) bool {
+	// check if the block is already in the chain
+	block := blocknode.Block
+	dummyBlockNode := blocknode
+	for {
+		if dummyBlockNode.Parent == nil {
+			return true
 		}
-		targetPrefix := ""
-		for j := 0; j < currentBlock.Header.Difficulty; j++ {
-			targetPrefix += "0"
-		}
-		calculatedHash := currentBlock.CalculateHash()
-		if calculatedHash != currentBlock.Hash || calculatedHash[:currentBlock.Header.Difficulty] != targetPrefix {
+		dummyBlockNode = dummyBlockNode.Parent
+		historyblock := dummyBlockNode.Block
+		if block.Data == historyblock.Data && block.Timestamp == historyblock.Timestamp {
 			return false
 		}
 	}
-	return true
 }
 
-// ResolveFork attempts to switch to a new chain branch if it's longer/better.
-// Called when a received block is valid but doesn't extend the current tip.
-// Returns true if a reorganization occurred, false otherwise.
-func (n *Node) ResolveFork(newBlock Block) (bool, error) {
-	n.Blockchain.mu.Lock()
-	defer n.Blockchain.mu.Unlock()
-
-	log.Printf("Attempting to resolve fork with new block %s... (H:%d)\n", newBlock.Hash[:8], newBlock.Header.Height)
-
-	currentTip := n.Blockchain.Chain[len(n.Blockchain.Chain)-1]
-
-	// basic check: compare heights (proxy for longest chain)
-	if newBlock.Header.Height <= currentTip.Header.Height {
-		log.Printf("New block height %d is not greater than current tip height %d. Fork not resolved.\n", newBlock.Header.Height, currentTip.Header.Height)
-		// store it as pending in case its children make it longer la	ster
-		n.Blockchain.pendingBlocks[newBlock.Hash] = newBlock
-		return false, nil // Current chain is longer or equal
+// BroadcastBlock uses Libp2p PubSub to broadcast a newly mined block.
+func (n *Node) BroadcastBlock(block Block) error {
+	log.Printf("Node %s broadcasting block %s via PubSub...\n", n.Host.ID().ShortString(), block.Hash[:8])
+	blockBytes, err := json.Marshal(block)
+	if err != nil {
+		return fmt.Errorf("failed to marshal block for broadcast: %w", err)
 	}
 
-	// simplified reorg (assumes newBlock's parent IS in current chain)
-	parentIndex, parentExists := n.Blockchain.blockIndex[newBlock.Header.ParentHash]
-	if !parentExists {
-		// this shouldn't happen if AddBlock already checked parent existence for non-tip extensions
-		log.Printf("ResolveFork Error: Parent %s... of new block %s... not found in main chain index, storing as pending.", newBlock.Header.ParentHash[:8], newBlock.Hash[:8])
-		n.Blockchain.pendingBlocks[newBlock.Hash] = newBlock
-		return false, fmt.Errorf("parent block not found during fork resolution attempt")
+	err = n.BlockTopic.Publish(n.Ctx, blockBytes)
+	if err != nil {
+		return fmt.Errorf("failed to publish block to pubsub topic: %w", err)
 	}
-
-	// validate the new block itself against its actual parent in our chain
-	parentBlock := n.Blockchain.Chain[parentIndex]
-	if !n.Blockchain.isBlockValidIntrinsic(newBlock, parentBlock) {
-		log.Printf("ResolveFork Error: New block %s... failed intrinsic validation against parent %s...", newBlock.Hash[:8], parentBlock.Hash[:8])
-		return false, fmt.Errorf("new block failed validation during fork resolution")
-	}
-
-	log.Printf("New block's chain (H:%d) is longer than current tip (H:%d). Performing reorganization.\n", newBlock.Header.Height, currentTip.Header.Height)
-
-	// reorganize the chain
-	// remove future blocks from main chain (stale blocks)
-	staleBlocks := n.Blockchain.Chain[parentIndex+1:]
-
-	// truncate the chain back to the common parent
-	n.Blockchain.Chain = n.Blockchain.Chain[:parentIndex+1]
-
-	// remove stale blocks from index
-	for _, staleBlock := range staleBlocks {
-		delete(n.Blockchain.blockIndex, staleBlock.Hash)
-		log.Printf("Removed stale block %s... (H:%d) from main chain.\n", staleBlock.Hash[:8], staleBlock.Header.Height)
-		// TODO: add transactions from stale blocks back to Mempool
-	}
-
-	// add the new block
-	n.Blockchain.Chain = append(n.Blockchain.Chain, newBlock)
-	n.Blockchain.blockIndex[newBlock.Hash] = len(n.Blockchain.Chain) - 1
-	log.Printf("Added new block %s... (H:%d) to main chain during reorg. New chain length: %d\n", newBlock.Hash[:8], newBlock.Header.Height, len(n.Blockchain.Chain))
-
-	// TODO: check pendingBlocks again, as this reorg might make some addable
-
-	return true, nil // reorg occurred
+	log.Printf("Node %s: Successfully published block %s to topic %s\n", n.Host.ID().ShortString(), block.Hash[:8], n.BlockTopic.String())
+	return nil
 }
 
 // --- Node Methods ---
@@ -303,12 +424,29 @@ func NewNode(ctx context.Context, listenPort int, discoveryTag string) (*Node, e
 	}
 
 	// 2. create Genesis Block (all nodes start with the same genesis)
-	genesisHeader := BlockHeader{Timestamp: time.Now().Unix(), Difficulty: 3, Height: 0}
-	genesisBlock := Block{Header: genesisHeader, Content: "Genesis Block"}
+	genesisBlock := Block{
+		Index:     0,
+		Timestamp: time.Now(),
+		Data:      "Genesis Block",
+		PreHash:   "",
+		Nonce:     0,
+	}
 	genesisBlock.Hash = genesisBlock.CalculateHash()
+	genesisBlockBlockNode := &BlockNode{
+		Block:    genesisBlock,
+		Parent:   nil,
+		Children: []*BlockNode{},
+		Height:   0,
+	}
 
 	// 3. initialize Blockchain
-	blockchain := &Blockchain{Chain: []Block{genesisBlock}, Mempool: []string{}, blockIndex: make(map[string]int), pendingBlocks: make(map[string]Block)}
+	blockchain := &Blockchain{
+		BlockIndex: make(map[string]*BlockNode),
+		Tips:       make(map[string]*BlockNode),
+		Head:       genesisBlockBlockNode,
+	}
+	blockchain.BlockIndex[genesisBlock.Hash] = genesisBlockBlockNode
+	blockchain.Tips[genesisBlock.Hash] = genesisBlockBlockNode
 
 	// 4. setup PubSub
 	ps, err := pubsub.NewGossipSub(nodeCtx, h)
@@ -402,62 +540,6 @@ func (n *Node) Stop() {
 		log.Printf("Error closing host for node %s: %v", n.Host.ID().ShortString(), err)
 	}
 	log.Printf("Node %s stopped.", n.Host.ID().ShortString())
-}
-
-// MineBlock picks a random nonce and increases it to find a valid one
-func (n *Node) MineBlock() (*Block, error) {
-	n.Blockchain.mu.RLock()
-	if len(n.Blockchain.Mempool) == 0 {
-		n.Blockchain.mu.RUnlock()
-		return nil, fmt.Errorf("mempool is empty")
-	}
-	content := n.Blockchain.Mempool[0]
-	parentBlock := n.Blockchain.Chain[len(n.Blockchain.Chain)-1]
-	difficulty := parentBlock.Header.Difficulty
-	n.Blockchain.mu.RUnlock()
-
-	block := NewBlock(content, parentBlock, difficulty)
-	targetPrefix := ""
-	for i := 0; i < difficulty; i++ {
-		targetPrefix += "0"
-	}
-
-	log.Printf("Node %s started mining...\n", n.Host.ID().ShortString())
-	startTime := time.Now()
-	// set nonce as a random number to avoid collisions
-	nonce := rand.Int63n(1000000)
-	for {
-		select {
-		case <-n.Ctx.Done():
-			log.Printf("Node %s mining cancelled.\n", n.Host.ID().ShortString())
-			return nil, fmt.Errorf("mining cancelled")
-		default:
-			block.Header.Nonce = nonce
-			hash := block.CalculateHash()
-			if hash[:difficulty] == targetPrefix {
-				block.Hash = hash
-				duration := time.Since(startTime)
-				log.Printf("Node %s found block! Hash: %s..., Nonce: %d, Time: %s\n", n.Host.ID().ShortString(), hash[:8], nonce, duration)
-				n.Blockchain.mu.Lock()
-				if len(n.Blockchain.Mempool) > 0 && n.Blockchain.Mempool[0] == content {
-					n.Blockchain.Mempool = n.Blockchain.Mempool[1:]
-				}
-				n.Blockchain.mu.Unlock()
-				return block, nil
-			}
-			nonce++
-		}
-	}
-}
-
-// SubmitContent adds content to the node's mempool
-func (n *Node) SubmitContent(content string) error {
-	n.Blockchain.mu.Lock()
-	n.Blockchain.Mempool = append(n.Blockchain.Mempool, content)
-	n.Blockchain.mu.Unlock()
-	log.Printf("Node %s added content to mempool: %s\n", n.Host.ID().ShortString(), content)
-	// broadcast transaction here via another PubSub topic or direct messages
-	return nil
 }
 
 // --- Libp2p Network Functions ---
@@ -595,73 +677,4 @@ func (n *Node) discoverPeers() {
 			return
 		}
 	}
-}
-
-// BroadcastBlock uses Libp2p PubSub to broadcast a newly mined block.
-func (n *Node) BroadcastBlock(block Block) error {
-	log.Printf("Node %s broadcasting block %s via PubSub...\n", n.Host.ID().ShortString(), block.Hash[:8])
-	blockBytes, err := json.Marshal(block)
-	if err != nil {
-		return fmt.Errorf("failed to marshal block for broadcast: %w", err)
-	}
-
-	err = n.BlockTopic.Publish(n.Ctx, blockBytes)
-	if err != nil {
-		return fmt.Errorf("failed to publish block to pubsub topic: %w", err)
-	}
-	log.Printf("Node %s: Successfully published block %s to topic %s\n", n.Host.ID().ShortString(), block.Hash[:8], n.BlockTopic.String())
-	return nil
-}
-
-// miningLoop continuously attempts to mine new blocks
-// mine whenever mempool is not empty, with a small delay
-func (n *Node) miningLoop() {
-	defer n.miningLoopWait.Done()
-	log.Printf("Node %s started mining loop.", n.Host.ID().ShortString())
-
-	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			n.Blockchain.mu.RLock()
-			mempoolSize := len(n.Blockchain.Mempool)
-			n.Blockchain.mu.RUnlock()
-
-			if mempoolSize > 0 {
-				log.Printf("Node %s attempting to mine a block (mempool size: %d)...\n", n.Host.ID().ShortString(), mempoolSize)
-				newBlock, err := n.MineBlock()
-				if err != nil {
-					if err.Error() != "mempool is empty" && err.Error() != "mining cancelled" {
-						log.Printf("Node %s mining error: %v\n", n.Host.ID().ShortString(), err)
-					}
-				} else if newBlock != nil {
-					addErr := n.Blockchain.AddBlock(*newBlock) // Add to own chain first
-					if addErr != nil {
-						log.Printf("Node %s failed to add own mined block: %v\n", n.Host.ID().ShortString(), addErr)
-					} else {
-						broadcastErr := n.BroadcastBlock(*newBlock) // Broadcast if added successfully
-						if broadcastErr != nil {
-							log.Printf("Node %s failed to broadcast block: %v\n", n.Host.ID().ShortString(), broadcastErr)
-						}
-					}
-				}
-			}
-		case <-n.Ctx.Done():
-			log.Printf("Node %s stopping mining loop due to context cancellation.\n", n.Host.ID().ShortString())
-			return
-		}
-	}
-}
-
-// GetChainTipHash returns the hash of the latest block in the chain
-// tip: the last block in the chain (think about tree structure)
-func (n *Node) GetChainTipHash() string {
-	n.Blockchain.mu.RLock()
-	defer n.Blockchain.mu.RUnlock()
-	if len(n.Blockchain.Chain) == 0 {
-		return ""
-	}
-	return n.Blockchain.Chain[len(n.Blockchain.Chain)-1].Hash
 }
