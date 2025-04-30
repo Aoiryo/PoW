@@ -22,7 +22,7 @@ import (
 
 // --- Core Data Structures ---
 
-var difficulty = 6 // Difficulty level for PoW
+var difficulty = 5 // Difficulty level for PoW
 
 type transaction struct {
 	Content   string
@@ -221,7 +221,7 @@ func (n *Node) MineBlock() (*Block, error) {
 				n.mu.Lock()
 				n.Mempool = n.Mempool[1:] // Remove the mined transaction from mempool
 				n.mu.Unlock()
-				n.Blockchain.mu.Lock()
+				// n.Blockchain.mu.Lock()
 
 				return block, nil
 			}
@@ -626,16 +626,16 @@ func (n *Node) pubsubHandler() {
 		if err != nil {
 			log.Printf("Node %s: Failed to add block from pubsub: %v\n", n.Host.ID().ShortString(), err)
 
-			// Attempt fork resolution if the block looks valid but doesn't extend our chain
-			if err.Error() == "block doesn't extend current tip (fork point detected)" {
-				resolved, resolveErr := n.ResolveFork(receivedBlock)
-				if resolveErr != nil {
-					log.Printf("Node %s: Fork resolution failed: %v\n", n.Host.ID().ShortString(), resolveErr)
-				} else if resolved {
-					log.Printf("Node %s: Successfully resolved fork with block %s\n",
-						n.Host.ID().ShortString(), receivedBlock.Hash[:8])
-				}
-			}
+			// // Attempt fork resolution if the block looks valid but doesn't extend our chain
+			// if err.Error() == "block doesn't extend current tip (fork point detected)" {
+			// 	resolved, resolveErr := n.ResolveFork(receivedBlock)
+			// 	if resolveErr != nil {
+			// 		log.Printf("Node %s: Fork resolution failed: %v\n", n.Host.ID().ShortString(), resolveErr)
+			// 	} else if resolved {
+			// 		log.Printf("Node %s: Successfully resolved fork with block %s\n",
+			// 			n.Host.ID().ShortString(), receivedBlock.Hash[:8])
+			// 	}
+			// }
 		} else {
 			// Block added successfully
 			log.Printf("Node %s: Block %s added successfully to chain\n",
