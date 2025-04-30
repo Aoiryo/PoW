@@ -25,7 +25,7 @@ import (
 
 // --- Core Data Structures ---
 
-var difficulty = 3 // Difficulty level for PoW
+var difficulty = 4 // Difficulty level for PoW
 
 type transaction struct {
 	Content   string
@@ -134,7 +134,7 @@ type BlocksResponseMsg struct {
 func (n *Node) SubmitContent(content string) error {
 	transaction := transaction{
 		Content:   content,
-		Timestamp: time.Now(),
+		Timestamp: time.Now().Truncate(time.Minute).Round(0),
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -241,7 +241,7 @@ func (bc *Blockchain) NewBlock(transaction transaction, nonce int) *Block {
 
 	block := &Block{
 		Index:     bc.Head.Height + 1,
-		Timestamp: time.Now(),
+		Timestamp: transaction.Timestamp,
 		Data:      transaction.Content,
 		PreHash:   bc.Head.Block.Hash,
 		Nonce:     nonce,
@@ -313,7 +313,7 @@ func (bc *Blockchain) AddBlock(block Block) error {
 	}
 
 	log.Printf("Validating block %s...", blocknode.Block.Hash[:8])
-	if bc.isValidBlock(blocknode.Block) == false {
+	if !bc.isValidBlock(blocknode.Block) {
 		log.Printf("Block %s validation failed", blocknode.Block.Hash[:8])
 		return fmt.Errorf("block %s is invalid", blocknode.Block.Hash)
 	}
@@ -355,11 +355,7 @@ func (bc *Blockchain) AddBlock(block Block) error {
 	}
 
 	// if it parents previously a tip, update the tips
-	if _, ok := bc.Tips[prevhash]; ok {
-		log.Printf("Removing previous tip %s as %s is now its child",
-			prevhash[:8], blocknode.Block.Hash[:8])
-		delete(bc.Tips, prevhash)
-	}
+	delete(bc.Tips, prevhash)
 	bc.Tips[blocknode.Block.Hash] = blocknode
 	log.Printf("Block %s added to tips map, total tips: %d",
 		blocknode.Block.Hash[:8], len(bc.Tips))
@@ -486,7 +482,7 @@ func NewNode(ctx context.Context, listenPort int, discoveryTag string) (*Node, e
 	// 2. create Genesis Block (all nodes start with the same genesis)
 	genesisBlock := Block{
 		Index:     0,
-		Timestamp: time.Now(),
+		Timestamp: time.Date(2001, 1, 2, 23, 41, 11, 0, time.UTC),
 		Data:      "Genesis Block",
 		PreHash:   "",
 		Nonce:     0,
