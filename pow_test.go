@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -333,6 +334,25 @@ func waitForConvergence(t *testing.T, nodes []*Node, maxWait time.Duration, chec
 	}
 }
 
+func ConnectNodes(nodes []*Node, ctx context.Context) error {
+	// Connect all nodes to each other
+	for i := 0; i < len(nodes); i++ {
+		for j := i + 1; j < len(nodes); j++ {
+			addrInfo := peer.AddrInfo{
+				ID:    nodes[j].Host.ID(),
+				Addrs: nodes[j].Host.Addrs(),
+			}
+			if err := nodes[i].Host.Connect(ctx, addrInfo); err != nil {
+				log.Printf("Failed to connect Node %d to Node %d: %v", i, j, err)
+				return fmt.Errorf("failed to connect Node %d to Node %d: %w", i, j, err)
+			} else {
+				log.Printf("Node %d connected to Node %d", i, j)
+			}
+		}
+	}
+	return nil
+}
+
 // --- Test Cases ---
 
 // PASSED
@@ -351,35 +371,43 @@ func TestSingleMinerBroadcastAndConvergence(t *testing.T) {
 	if len(nodes) < 3 {
 		t.Fatal("Test requires at least 3 nodes.") // Sanity check
 	}
-	minerNode := nodes[0]
-	listenerNode1 := nodes[1]
-	listenerNode2 := nodes[2]
 
-	// --- Manually Connect Nodes ---
-	// Ensure miner can reach listeners and listeners can reach miner (or at least one way)
-	// It's often sufficient to connect listeners TO the miner.
-	log.Printf("[%s] Manually connecting listener nodes to miner node...", t.Name())
-	minerAddrInfo := peer.AddrInfo{
-		ID:    minerNode.Host.ID(),
-		Addrs: minerNode.Host.Addrs(),
-	}
-
-	// Connect Listener 1 to Miner
-	log.Printf("[%s] Connecting Node 1 (%s) to Miner (%s)...", t.Name(), listenerNode1.Host.ID().ShortString(), minerNode.Host.ID().ShortString())
-	if err := listenerNode1.Host.Connect(ctx, minerAddrInfo); err != nil {
-		// Make connection failure fatal for this test as it relies on connectivity
-		t.Fatalf("[%s] Failed to manually connect Node 1 to Miner: %v", t.Name(), err)
+	// connect all nodes to each other
+	err = ConnectNodes(nodes, ctx)
+	if err != nil {
+		t.Fatalf("Failed to connect nodes: %v", err)
 	} else {
-		log.Printf("[%s] Node 1 successfully initiated connection to Miner.", t.Name())
+		log.Printf("[%s] All nodes connected successfully.", t.Name())
 	}
+	// minerNode := nodes[0]
+	// listenerNode1 := nodes[1]
+	// listenerNode2 := nodes[2]
 
-	// Connect Listener 2 to Miner
-	log.Printf("[%s] Connecting Node 2 (%s) to Miner (%s)...", t.Name(), listenerNode2.Host.ID().ShortString(), minerNode.Host.ID().ShortString())
-	if err := listenerNode2.Host.Connect(ctx, minerAddrInfo); err != nil {
-		t.Fatalf("[%s] Failed to manually connect Node 2 to Miner: %v", t.Name(), err)
-	} else {
-		log.Printf("[%s] Node 2 successfully initiated connection to Miner.", t.Name())
-	}
+	// // --- Manually Connect Nodes ---
+	// // Ensure miner can reach listeners and listeners can reach miner (or at least one way)
+	// // It's often sufficient to connect listeners TO the miner.
+	// log.Printf("[%s] Manually connecting listener nodes to miner node...", t.Name())
+	// minerAddrInfo := peer.AddrInfo{
+	// 	ID:    minerNode.Host.ID(),
+	// 	Addrs: minerNode.Host.Addrs(),
+	// }
+
+	// // Connect Listener 1 to Miner
+	// log.Printf("[%s] Connecting Node 1 (%s) to Miner (%s)...", t.Name(), listenerNode1.Host.ID().ShortString(), minerNode.Host.ID().ShortString())
+	// if err := listenerNode1.Host.Connect(ctx, minerAddrInfo); err != nil {
+	// 	// Make connection failure fatal for this test as it relies on connectivity
+	// 	t.Fatalf("[%s] Failed to manually connect Node 1 to Miner: %v", t.Name(), err)
+	// } else {
+	// 	log.Printf("[%s] Node 1 successfully initiated connection to Miner.", t.Name())
+	// }
+
+	// // Connect Listener 2 to Miner
+	// log.Printf("[%s] Connecting Node 2 (%s) to Miner (%s)...", t.Name(), listenerNode2.Host.ID().ShortString(), minerNode.Host.ID().ShortString())
+	// if err := listenerNode2.Host.Connect(ctx, minerAddrInfo); err != nil {
+	// 	t.Fatalf("[%s] Failed to manually connect Node 2 to Miner: %v", t.Name(), err)
+	// } else {
+	// 	log.Printf("[%s] Node 2 successfully initiated connection to Miner.", t.Name())
+	// }
 
 	// Allow a moment for connections and pubsub peer discovery over the new connections
 	log.Printf("[%s] Waiting briefly after manual connections...", t.Name())
@@ -387,12 +415,12 @@ func TestSingleMinerBroadcastAndConvergence(t *testing.T) {
 	// You could add explicit checks here using host.Network().Peers() again if needed
 
 	// --- Content Submission (only to miner) ---
-	log.Printf("[%s] Submitting initial content only to miner node %s...", t.Name(), minerNode.Host.ID().ShortString())
+	log.Printf("[%s] Submitting initial content only to miner node %s...", t.Name(), nodes[0].Host.ID().ShortString())
 	numContents := 3
 	for i := 0; i < numContents; i++ {
 		content := fmt.Sprintf("MinerTx-%d", i+1)
-		if err := minerNode.SubmitContent(content); err != nil {
-			t.Logf("[%s] Warning: SubmitContent failed for '%s' on miner node %s: %v", t.Name(), content, minerNode.Host.ID().ShortString(), err)
+		if err := nodes[0].SubmitContent(content); err != nil {
+			t.Logf("[%s] Warning: SubmitContent failed for '%s' on miner node %s: %v", t.Name(), content, nodes[0].Host.ID().ShortString(), err)
 		}
 	}
 
@@ -405,6 +433,104 @@ func TestSingleMinerBroadcastAndConvergence(t *testing.T) {
 	// --- Check Convergence ---
 	log.Printf("[%s] Checking for final convergence among all nodes...", t.Name())
 	converged, finalTip, finalHeight := waitForConvergence(t, nodes, 5*time.Second, 1*time.Second)
+
+	// --- Assertions (remain the same) ---
+	if !converged {
+		t.Errorf("[%s] Nodes failed to converge after single miner produced blocks.", t.Name())
+		// ... (log final state) ...
+		t.Fail()
+	} else {
+		if finalHeight < numContents {
+			t.Errorf("[%s] Converged, but final chain height (%d) is less than submitted contents (%d).", t.Name(), finalHeight, numContents)
+		} else {
+			t.Logf("[%s] Test Passed: All nodes converged after single miner produced blocks. Final Tip: %s... (H:%d)", t.Name(), finalTip[:8], finalHeight)
+		}
+	}
+}
+
+// // Test Case: Single Miner, Broadcast, and Convergence Verification
+func TestMultiMinerBroadcastAndConvergence(t *testing.T) {
+	t.Parallel()
+	log.Println("--- TestMultiMinerBroadcastAndConvergence ---")
+	discoveryTag := getTestDiscoveryTag(t)
+	numNodes := 5
+	ctx, cancel, nodes, err := setupTestNetwork(t, numNodes, discoveryTag) // setup 3 nodes
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer cancel()
+	defer func() { /* ... (defer cleanup remains the same) ... */ }()
+
+	if len(nodes) < numNodes {
+		t.Fatal("Test requires at least 3 nodes.") // Sanity check
+	}
+
+	// connect all nodes to each other
+	err = ConnectNodes(nodes, ctx)
+	if err != nil {
+		t.Fatalf("Failed to connect nodes: %v", err)
+	} else {
+		log.Printf("[%s] All nodes connected successfully.", t.Name())
+	}
+
+	// minerNode := nodes[0]
+	// listenerNode1 := nodes[1]
+	// listenerNode2 := nodes[2]
+
+	// // --- Manually Connect Nodes ---
+	// // Ensure miner can reach listeners and listeners can reach miner (or at least one way)
+	// // It's often sufficient to connect listeners TO the miner.
+	// log.Printf("[%s] Manually connecting listener nodes to miner node...", t.Name())
+	// minerAddrInfo := peer.AddrInfo{
+	// 	ID:    minerNode.Host.ID(),
+	// 	Addrs: minerNode.Host.Addrs(),
+	// }
+
+	// // Connect Listener 1 to Miner
+	// log.Printf("[%s] Connecting Node 1 (%s) to Miner (%s)...", t.Name(), listenerNode1.Host.ID().ShortString(), minerNode.Host.ID().ShortString())
+	// if err := listenerNode1.Host.Connect(ctx, minerAddrInfo); err != nil {
+	// 	// Make connection failure fatal for this test as it relies on connectivity
+	// 	t.Fatalf("[%s] Failed to manually connect Node 1 to Miner: %v", t.Name(), err)
+	// } else {
+	// 	log.Printf("[%s] Node 1 successfully initiated connection to Miner.", t.Name())
+	// }
+
+	// // Connect Listener 2 to Miner
+	// log.Printf("[%s] Connecting Node 2 (%s) to Miner (%s)...", t.Name(), listenerNode2.Host.ID().ShortString(), minerNode.Host.ID().ShortString())
+	// if err := listenerNode2.Host.Connect(ctx, minerAddrInfo); err != nil {
+	// 	t.Fatalf("[%s] Failed to manually connect Node 2 to Miner: %v", t.Name(), err)
+	// } else {
+	// 	log.Printf("[%s] Node 2 successfully initiated connection to Miner.", t.Name())
+	// }
+
+	// Allow a moment for connections and pubsub peer discovery over the new connections
+	log.Printf("[%s] Waiting briefly after manual connections...", t.Name())
+	time.Sleep(5 * time.Second)
+	// You could add explicit checks here using host.Network().Peers() again if needed
+
+	// --- Content Submission (only to miner) ---
+	log.Printf("[%s] Submitting initial content to 3 miner node randomly", t.Name())
+	numContents := 7
+	for i := 0; i < numContents; i++ {
+		for j := 0; j < 3; j++ {
+			index := rand.Intn(numNodes)
+			minerNode := nodes[index]
+			content := fmt.Sprintf("MinerTx-%d", i+1)
+			if err := minerNode.SubmitContent(content); err != nil {
+				t.Logf("[%s] Warning: SubmitContent failed for '%s' on miner node %s: %v", t.Name(), content, minerNode.Host.ID().ShortString(), err)
+			}
+		}
+	}
+
+	// --- Wait for Mining & Broadcast ---
+	estimatedBlockTime := (miningWaitTime / 2) + syncWaitTime
+	totalWaitTime := time.Duration(numContents+1) * estimatedBlockTime // Wait for numContents blocks + buffer
+	log.Printf("[%s] Waiting %v for miner node to mine %d blocks and broadcast...", t.Name(), totalWaitTime, numContents)
+	time.Sleep(totalWaitTime)
+
+	// --- Check Convergence ---
+	log.Printf("[%s] Checking for final convergence among all nodes...", t.Name())
+	converged, finalTip, finalHeight := waitForConvergence(t, nodes, 60*time.Second, 5*time.Second)
 
 	// --- Assertions (remain the same) ---
 	if !converged {

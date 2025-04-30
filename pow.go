@@ -125,7 +125,7 @@ const BlockTopicName = "blockchain/blocks" // Using topic name as discovery tag
 func (n *Node) SubmitContent(content string) error {
 	transaction := transaction{
 		Content:   content,
-		Timestamp: time.Now(),
+		Timestamp: time.Now().Truncate(time.Minute).Round(0),
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -239,7 +239,7 @@ func (bc *Blockchain) NewBlock(transaction transaction, nonce int) *Block {
 
 	block := &Block{
 		Index:     bc.Head.Height + 1,
-		Timestamp: time.Now().Round(0),
+		Timestamp: transaction.Timestamp,
 		Data:      transaction.Content,
 		PreHash:   bc.Head.Block.Hash,
 		Nonce:     nonce,
