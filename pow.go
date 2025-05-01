@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +27,7 @@ import (
 // --- Core Data Structures ---
 
 var difficulty = 1 // Difficulty level for PoW
+var ErrOutOfRange = errors.New("block index out of range")
 
 type transaction struct {
 	Content   string
@@ -331,9 +333,12 @@ func (bc *Blockchain) AddBlock(block Block) error {
 	}
 
 	log.Printf("Validating block %s...", blocknode.Block.Hash[:8])
-	if !bc.isValidBlock(blocknode.Block) {
-		log.Printf("Block %s validation failed", blocknode.Block.Hash[:8])
-		return fmt.Errorf("block %s is invalid", blocknode.Block.Hash)
+	err := bc.isValidBlock(blocknode.Block)
+	if errors.Is(err, ErrOutOfRange) {
+		return ErrOutOfRange
+	} else if err != nil {
+		log.Printf("Block %s validation failed: %v", blocknode.Block.Hash[:8], err)
+		return fmt.Errorf("block %s is invalid: %v", blocknode.Block.Hash, err)
 	}
 	log.Printf("Block %s passed validation", blocknode.Block.Hash[:8])
 
@@ -420,7 +425,7 @@ func (bc *Blockchain) ChainPruning() {
 }
 
 // isValidBlock validates a single block relative to the current chain state
-func (bc *Blockchain) isValidBlock(block Block) bool {
+func (bc *Blockchain) isValidBlock(block Block) error {
 	log.Printf("Validating block %s at height %d with data: %s", block.Hash[:8], block.Index, block.Data)
 	log.Printf("Block details - Index: %d, PreHash: %s, Nonce: %d",
 		block.Index, block.PreHash[:8], block.Nonce)
@@ -436,7 +441,7 @@ func (bc *Blockchain) isValidBlock(block Block) bool {
 		log.Printf("Validation Error: Hash mismatch for block %s", block.Hash[:8])
 		log.Printf("  Provided hash: %s", block.Hash[:16])
 		log.Printf("  Calculated hash: %s", calculatedHash[:16])
-		return false
+		return fmt.Errorf("hash mismatch for block")
 	}
 
 	// Validate PoW difficulty
@@ -444,28 +449,32 @@ func (bc *Blockchain) isValidBlock(block Block) bool {
 		log.Printf("Validation Error: PoW difficulty not met for block %s", block.Hash[:8])
 		log.Printf("  Required prefix: %s", targetPrefix)
 		log.Printf("  Actual prefix: %s", calculatedHash[:difficulty])
-		return false
+		return fmt.Errorf("PoW difficulty not met for block")
 	}
 
 	if block.Index < 0 || block.Index > bc.Head.Height+1 {
 		log.Printf("Validation Error: Block index out of range for block %s", block.Hash[:8])
 		log.Printf("  Index: %d, Max allowed: %d", block.Index, bc.Head.Height+1)
-		return false
+		return ErrOutOfRange
 	}
 
 	// check prevhash
 	if block.PreHash == "" {
 		log.Printf("Validation Error: Genesis block cannot have a parent")
-		return false
+		return ErrOutOfRange
 	}
 	if _, ok := bc.BlockIndex[block.PreHash]; !ok {
+		if block.Index == bc.Head.Height+1 {
+			log.Printf("Validation Error: Block index is height + 1 but parents not found %s", block.Hash[:8])
+			return ErrOutOfRange
+		}
 		log.Printf("Validation Error: Parent block %s not found in blockchain", block.PreHash[:8])
-		return false
+		return ErrOutOfRange
 	}
 
 	log.Printf("Block %s successfully validated", block.Hash[:8])
 	// and more...
-	return true
+	return nil
 }
 
 func (bc *Blockchain) DeDuplicate(blocknode *BlockNode) bool {
@@ -555,7 +564,7 @@ func NewNode(ctx context.Context, listenPort int, discoveryTag string) (*Node, e
 	}
 
 	// 6. subscribe to the block topic
-	sub, err := blockTopic.Subscribe()
+	sub, err := blockTopic.Subscribe(pubsub.WithBufferSize(40960))
 	if err != nil {
 		blockTopic.Close()
 		h.Close()
@@ -1364,47 +1373,69 @@ func (n *Node) checkRecoveryNeeded() bool {
 // pubsubHandler processes messages received via PubSub topics.
 func (n *Node) pubsubHandler() {
 	log.Printf("Node %s starting PubSub handler for topic %s\n", n.Host.ID().ShortString(), n.BlockSub.Topic())
+	failBuffer := []Block{}
+	flag := false
 	for {
-		msg, err := n.BlockSub.Next(n.Ctx)
-		// check for context cancellation first
-		if n.Ctx.Err() != nil {
-			log.Printf("Node %s: PubSub handler stopping due to context cancellation.\n", n.Host.ID().ShortString())
-			return
-		}
-		if err != nil {
-			log.Printf("Node %s: Error reading from pubsub topic %s: %v\n", n.Host.ID().ShortString(), n.BlockSub.Topic(), err)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		if msg.ReceivedFrom == n.Host.ID() {
-			continue
-		}
-
 		var receivedBlock Block
-		err = json.Unmarshal(msg.Data, &receivedBlock)
-		if err != nil {
-			log.Printf("Node %s: Error unmarshalling block from pubsub from %s: %v\n", n.Host.ID().ShortString(), msg.GetFrom().ShortString(), err)
-			continue
-		}
-
-		log.Printf("Node %s: Received block %s via PubSub from %s.\n", n.Host.ID().ShortString(), receivedBlock.Hash[:8], msg.GetFrom().ShortString())
-
-		// try to add the block to our chain
-		err = n.Blockchain.AddBlock(receivedBlock)
-		if err != nil {
-			log.Printf("Node %s: Failed to add block from pubsub: %v\n", n.Host.ID().ShortString(), err)
-
-			// attempt fork resolution if the block looks valid but doesn't extend our chain
-			if err.Error() == "block doesn't extend current tip (fork point detected)" {
-				// error will not happen since we are using tree structure now
-				// we will prune the chain instead eventually
-				// pass
+		if len(failBuffer) > 0 && flag {
+			flag = false
+			for i, block := range failBuffer {
+				err := n.Blockchain.AddBlock(block)
+				if err != nil {
+					log.Printf("Node %s: Failed to add block from fail buffer: %v\n", n.Host.ID().ShortString(), err)
+					continue
+				}
+				log.Printf("Node %s: Block %s added successfully from fail buffer\n",
+					n.Host.ID().ShortString(), block.Hash[:8])
+				failBuffer = append(failBuffer[:i], failBuffer[i+1:]...)
+				flag = true
+				break
 			}
 		} else {
-			// block added successfully
-			log.Printf("Node %s: Block %s added successfully to chain\n",
-				n.Host.ID().ShortString(), receivedBlock.Hash[:8])
+			msg, err := n.BlockSub.Next(n.Ctx)
+			// check for context cancellation first
+			if n.Ctx.Err() != nil {
+				log.Printf("Node %s: PubSub handler stopping due to context cancellation.\n", n.Host.ID().ShortString())
+				return
+			}
+			if err != nil {
+				log.Printf("Node %s: Error reading from pubsub topic %s: %v\n", n.Host.ID().ShortString(), n.BlockSub.Topic(), err)
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			if msg.ReceivedFrom == n.Host.ID() {
+				continue
+			}
+
+			err = json.Unmarshal(msg.Data, &receivedBlock)
+			if err != nil {
+				log.Printf("Node %s: Error unmarshalling block from pubsub from %s: %v\n", n.Host.ID().ShortString(), msg.GetFrom().ShortString(), err)
+				continue
+			}
+
+			log.Printf("Node %s: Received block %s via PubSub from %s.\n", n.Host.ID().ShortString(), receivedBlock.Hash[:8], msg.GetFrom().ShortString())
+
+			// try to add the block to our chain
+			err = n.Blockchain.AddBlock(receivedBlock)
+			if errors.Is(err, ErrOutOfRange) {
+				log.Println("Block added to fail buffer")
+				failBuffer = append(failBuffer, receivedBlock)
+			} else if err != nil {
+				log.Printf("Node %s: Failed to add block from pubsub: %v\n", n.Host.ID().ShortString(), err)
+
+				// attempt fork resolution if the block looks valid but doesn't extend our chain
+				if err.Error() == "block doesn't extend current tip (fork point detected)" {
+					// error will not happen since we are using tree structure now
+					// we will prune the chain instead eventually
+					// pass
+				}
+			} else {
+				// block added successfully
+				flag = true
+				log.Printf("Node %s: Block %s added successfully to chain\n",
+					n.Host.ID().ShortString(), receivedBlock.Hash[:8])
+			}
 		}
 	}
 }

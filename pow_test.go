@@ -386,6 +386,7 @@ func nodesForkSetup(nodes []*Node) {
 		nodes[i].Blockchain.Head.Children = append(nodes[i].Blockchain.Head.Children, block1Node, block2Node)
 		nodes[i].Blockchain.BlockIndex[block1.Hash] = block1Node
 		nodes[i].Blockchain.BlockIndex[block2.Hash] = block2Node
+		delete(nodes[i].Blockchain.BlockIndex, nodes[i].Blockchain.Head.Block.Hash)
 		nodes[i].Blockchain.Tips[block1.Hash] = block1Node
 		nodes[i].Blockchain.Tips[block2.Hash] = block2Node
 		j := rand.Intn(2)
@@ -585,7 +586,7 @@ func TestInvalidBlockRejection(t *testing.T) {
 	// --- Incorrect Previous Hash ---
 	log.Printf("[%s] Testing rejection of block with incorrect previous hash...", t.Name())
 	invalidBlockBadPrevHash := &Block{
-		Index:     initialTip.Height + 1,
+		Index:     initialTip.Height + 10,
 		Timestamp: time.Now(),
 		Data:      "InvalidPreHash Block Data",
 		Nonce:     12345,                            // nonce doesn't matter much here if PreHash is wrong
