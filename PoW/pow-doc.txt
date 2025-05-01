@@ -1,0 +1,162 @@
+package blockchain // import "lab4"
+
+
+CONSTANTS
+
+const BlockTopicName = "blockchain/blocks" // Using topic name as discovery tag
+    --- Constants for libp2p ---
+
+const BlocksProtocolID = "/blockchain/blocks/1.0.0"
+const ChainInfoProtocolID = "/blockchain/chaininfo/1.0.0"
+const HeadersProtocolID = "/blockchain/headers/1.0.0"
+
+VARIABLES
+
+var ErrOutOfRange = errors.New("block index out of range")
+
+TYPES
+
+type Block struct {
+	Index     int
+	Timestamp time.Time
+	Data      string
+	PreHash   string
+	Nonce     int
+	Hash      string
+}
+    Block is the block that is stored in the blockchain
+
+func (b *Block) CalculateHash() string
+    CalculateHash computes the hash of the whole block
+
+type BlockHeader struct {
+	Index     int
+	Hash      string
+	PreHash   string
+	Timestamp time.Time
+}
+    BlockHeader is a lightweight version of Block used for chain comparison
+
+type BlockNode struct {
+	Block    Block
+	Parent   *BlockNode
+	Children []*BlockNode
+	Height   int
+}
+    BlockNode is the wrapper node that is stored in the tree structure
+
+type BlockToHash struct {
+	Index      int
+	Timestamp  time.Time
+	Data       string
+	PreHash    string
+	Nonce      int
+	Difficulty int
+}
+    BlockToHash is the data that is hashed to produce the block hash
+
+type Blockchain struct {
+	BlockIndex map[string]*BlockNode
+	Tips       map[string]*BlockNode
+	Head       *BlockNode
+	// Has unexported fields.
+}
+    Blockchain is the local blockchain that is stored in the node
+
+func (bc *Blockchain) AddBlock(block Block) error
+    AddBlock adds a block to the blockchain. it also checks if the block is
+    valid and adds it to the blockchain
+
+func (bc *Blockchain) ChainPruning()
+    ChainPruning prunes the blockchain to keep only the longest chain. we have
+    this because we are storing all the blocks in the blockchain as a tree
+    structure
+
+func (bc *Blockchain) DeDuplicate(blocknode *BlockNode) bool
+    DeDuplicate checks if a block is a duplicate. it checks if the block is
+    already in the chain
+
+func (bc *Blockchain) NewBlock(transaction transaction, nonce int) *Block
+    NewBlock creates a new block (called after successful mining)
+
+type BlocksResponseMsg struct {
+	Blocks []Block // The list of blocks being sent
+	More   bool    // Indicates if the sender has more blocks after this batch
+}
+    BlocksResponseMsg containing the requested blocks
+
+type GetBlocksRequestMsg struct {
+	StartHash string // The hash of the latest block the requester knows
+	StopHash  string // Optional: Request blocks up to this hash (can be empty)
+}
+    GetBlockRequestMsg blocks starting after a known hash, optionally up to a
+    stop hash
+
+type MessageType int
+
+const (
+	RequestHeaders MessageType = iota
+	ResponseHeaders
+	RequestBlock
+	ResponseBlock
+)
+type Node struct {
+	Host       host.Host
+	Blockchain *Blockchain
+	Mempool    []transaction
+	PubSub     *pubsub.PubSub
+	BlockTopic *pubsub.Topic
+	BlockSub   *pubsub.Subscription       // Added field for the subscription
+	Discovery  *drouting.RoutingDiscovery // Added field for discovery
+	Ctx        context.Context
+
+	DiscoveryTag string // Tag used for finding peers
+	// Has unexported fields.
+}
+    Node is the miner node
+
+func NewNode(ctx context.Context, listenPort int, discoveryTag string) (*Node, error)
+    NewNode creates and initializes a new Node instance
+
+func (n *Node) BroadcastBlock(block Block) error
+    BroadcastBlock uses Libp2p PubSub to broadcast a newly mined block.
+
+func (n *Node) MineBlock() (*Block, error)
+    MineBlock picks a random nonce and increases it to find a valid one
+
+func (n *Node) Start()
+    start the node's background processes (PubSub handler, Discovery, Mining
+    loop)
+
+func (n *Node) StartRecovery()
+    StartRecovery initiates the recovery process when a node rejoins the
+    network. this is done by streaming the chain info to the node and then
+    syncing the missing blocks
+
+func (n *Node) Stop()
+    stop gracefully shuts down the node's background processes and closes the
+    host.
+
+func (n *Node) SubmitContent(content string) error
+    --- Client Submission Methods --- SubmitContent adds content to the node's
+    mempool
+
+func (n *Node) SubmitContentWithTimestamp(content string, timestamp time.Time) error
+    SubmitContentWithTimestamp adds content to the node's mempool with a
+    specific timestamp
+
+type RecoveryMessage struct {
+	Type      MessageType
+	Data      []byte // Contains serialized headers or blocks
+	StartHash string // For header requests
+	EndHash   string // For header requests
+	BlockHash string // For block requests
+}
+    RecoveryMessage structure for recovery protocol
+
+type TipResponseMsg struct {
+	HeadHash string
+	Height   int
+}
+    TipResponseMsg containing the peer's tip info
+

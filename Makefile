@@ -10,3 +10,6 @@ build:
 
 all: build
 	go test -C $(PKGNAME) -v $(MKARGS)
+
+docs:
+	cd $(PKGNAME) && go doc -all > pow-doc.txt

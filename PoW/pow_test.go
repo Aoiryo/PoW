@@ -124,7 +124,7 @@ func setupTestNetwork(t *testing.T, numNodes int, discoveryTag string) (context.
 	return ctx, cancel, finalNodes, nil
 }
 
-// helper to check if all nodes have converged to the same chain tip hash and height
+// Helper function to check if all nodes have converged to the same chain tip hash and height
 func checkChainConvergence(t *testing.T, nodes []*Node) (converged bool, tipHash string, tipHeight int) {
 
 	if len(nodes) <= 1 {
@@ -215,6 +215,7 @@ func waitForConvergence(t *testing.T, nodes []*Node, maxWait time.Duration, chec
 	}
 }
 
+// Helper function to connect all nodes to each other
 func ConnectNodes(nodes []*Node, ctx context.Context) error {
 	// Connect all nodes to each other
 	for i := 0; i < len(nodes); i++ {
@@ -232,7 +233,7 @@ func ConnectNodes(nodes []*Node, ctx context.Context) error {
 	return nil
 }
 
-// helper function to find content in the chain
+// Helper function to find content in the chain
 func findContentInChain(t *testing.T, node *Node, content string, startHeight int, endHeight int) bool {
 	t.Helper()
 	node.Blockchain.mu.Lock()
@@ -261,7 +262,7 @@ func findContentInChain(t *testing.T, node *Node, content string, startHeight in
 	return false // Content not found
 }
 
-// helper for setting up a tree structure with forked chains
+// Helper function to set up a tree structure with forked chains
 func nodesForkSetup(nodes []*Node) {
 	// Connect all nodes to each other
 	block1 := Block{
@@ -314,7 +315,7 @@ func nodesForkSetup(nodes []*Node) {
 
 // --- Test Cases ---
 
-// Test Case 0: Basic communication between nodes
+// Test Case 0: Basic communication between nodes (10 pts)
 func TestPubSubCommunication(t *testing.T) {
 	// create 2 nodes
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -415,9 +416,12 @@ func TestPubSubCommunication(t *testing.T) {
 
 	// wait for the receiving goroutine to complete
 	wg.Wait()
+
+	// 10 pts
+	t.Logf("Test 0 PASSED: 10 pts")
 }
 
-// Test Case 1: Single Miner, Broadcast, and Convergence Verification
+// Test Case 1: Single Miner, Broadcast, and Convergence Verification (15 pts)
 func TestSingleMinerBroadcastAndConvergence(t *testing.T) {
 	// t.Parallel()
 	log.Println("--- TestSingleMinerBroadcastAndConvergence ---")
@@ -477,9 +481,12 @@ func TestSingleMinerBroadcastAndConvergence(t *testing.T) {
 			t.Logf("[%s] Test Passed: All nodes converged after single miner produced blocks. Final Tip: %s... (H:%d)", t.Name(), finalTip[:8], finalHeight)
 		}
 	}
+
+	// 15 pts
+	t.Logf("Test 1 PASSED: 15 pts")
 }
 
-// Test Case 2: Multiple Miners, Broadcast, and Convergence Verification
+// Test Case 2: Multiple Miners, Broadcast, and Convergence Verification (30 pts)
 func TestMultiMinerBroadcastAndConvergence(t *testing.T) {
 	// t.Parallel()
 	log.Println("--- TestMultiMinerBroadcastAndConvergence ---")
@@ -555,9 +562,12 @@ func TestMultiMinerBroadcastAndConvergence(t *testing.T) {
 			t.Logf("[%s] Test Passed: All nodes converged after single miner produced blocks. Final Tip: %s... (H:%d)", t.Name(), finalTip[:8], finalHeight)
 		}
 	}
+
+	// 30 pts
+	t.Logf("Test 2 PASSED: 30 pts")
 }
 
-// Test Case 3: Invalid Block Rejection
+// Test Case 3: Invalid Block Rejection (25 pts)
 // submits various malformed blocks directly to a node's AddBlock method
 // and verifies they are rejected.
 func TestInvalidBlockRejection(t *testing.T) {
@@ -688,9 +698,12 @@ func TestInvalidBlockRejection(t *testing.T) {
 	if currentTip.Block.Hash != initialTip.Block.Hash {
 		t.Errorf("[%s] Blockchain tip changed after rejecting block with correct hash but wrong contents. Old: %s, New: %s", t.Name(), initialTip.Block.Hash[:8], currentTip.Block.Hash[:8])
 	}
+
+	// 25 pts
+	t.Logf("Test 3 PASSED: 25 pts")
 }
 
-// Test Case 4: Fork Convergence
+// Test Case 4: Fork Convergence (50 pts)
 func TestForkConvergence(t *testing.T) {
 	// t.Parallel()
 	log.Println("--- TestForkConvergence ---")
@@ -770,9 +783,12 @@ func TestForkConvergence(t *testing.T) {
 			t.Logf("[%s] Test Passed: All nodes converged after single miner produced blocks. Final Tip: %s... (H:%d)", t.Name(), finalTip[:8], finalHeight)
 		}
 	}
+
+	// 50 pts
+	t.Logf("Test 4 PASSED: 50 pts")
 }
 
-// Test case 5: Transaction de-duplication
+// Test case 5: Transaction de-duplication (35 pts)
 // ensures that content submitted and included in a block is not included
 // again in subsequent blocks by the same node.
 func TestTransactionDeDuplication(t *testing.T) {
@@ -889,9 +905,14 @@ func TestTransactionDeDuplication(t *testing.T) {
 			t.Logf("[%s] PASS: Duplicate content '%s' was NOT found in subsequent blocks (checked range %d-%d). De-duplication successful.", t.Name(), uniqueContent, startHeightForSecondCheck, heightAfterSecondMining)
 		}
 	}
+
+	// 35 pts
+	t.Logf("Test 5 PASSED: 35 pts")
 }
 
-// Test case 6: Crash recovery
+// Test case 6: Crash recovery (35 pts)
+// this test case using late connection to simulate a crashed node rejoining the network.
+// when a node disconnects, it loses the chain info. so the situation is similar to the case when a node is connected late to the network
 func TestNodeCrashRecovery(t *testing.T) {
 	specMiningWaitTime := 25 * time.Second
 	// create context with timeout
@@ -1017,4 +1038,7 @@ func TestNodeCrashRecovery(t *testing.T) {
 	}
 
 	log.Printf("[%s] recovery test successful: node2 caught up to node1", t.Name())
+
+	// 35 pts
+	t.Logf("Test 6 PASSED: 35 pts")
 }

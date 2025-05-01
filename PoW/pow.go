@@ -29,13 +29,13 @@ import (
 var difficulty = 1 // Difficulty level for PoW
 var ErrOutOfRange = errors.New("block index out of range")
 
-// --- Transaction ---
+// transaction contains the content and timestamp
 type transaction struct {
 	Content   string
 	Timestamp time.Time
 }
 
-// this is the data that is hashed to produce the block hash
+// BlockToHash is the data that is hashed to produce the block hash
 type BlockToHash struct {
 	Index      int
 	Timestamp  time.Time
@@ -45,7 +45,7 @@ type BlockToHash struct {
 	Difficulty int
 }
 
-// this is the block that is stored in the blockchain
+// Block is the block that is stored in the blockchain
 type Block struct {
 	Index     int
 	Timestamp time.Time
@@ -55,7 +55,7 @@ type Block struct {
 	Hash      string
 }
 
-// this is the wrapper node that is stored in the tree structure
+// BlockNode is the wrapper node that is stored in the tree structure
 type BlockNode struct {
 	Block    Block
 	Parent   *BlockNode
@@ -63,7 +63,7 @@ type BlockNode struct {
 	Height   int
 }
 
-// this is the local blockchain that is stored in the node
+// Blockchain is the local blockchain that is stored in the node
 type Blockchain struct {
 	mu         sync.Mutex
 	BlockIndex map[string]*BlockNode
@@ -71,7 +71,7 @@ type Blockchain struct {
 	Head       *BlockNode
 }
 
-// this is the miner node
+// Node is the miner node
 type Node struct {
 	mu             sync.Mutex
 	Host           host.Host
@@ -102,7 +102,7 @@ const (
 	ResponseBlock
 )
 
-// Message structure for recovery protocol
+// RecoveryMessage structure for recovery protocol
 type RecoveryMessage struct {
 	Type      MessageType
 	Data      []byte // Contains serialized headers or blocks
@@ -111,7 +111,7 @@ type RecoveryMessage struct {
 	BlockHash string // For block requests
 }
 
-// Header is a lightweight version of Block used for chain comparison
+// BlockHeader is a lightweight version of Block used for chain comparison
 type BlockHeader struct {
 	Index     int
 	Hash      string
@@ -119,19 +119,19 @@ type BlockHeader struct {
 	Timestamp time.Time
 }
 
-// Response containing the peer's tip info
+// TipResponseMsg containing the peer's tip info
 type TipResponseMsg struct {
 	HeadHash string
 	Height   int
 }
 
-// Request blocks starting after a known hash, optionally up to a stop hash
+// GetBlockRequestMsg blocks starting after a known hash, optionally up to a stop hash
 type GetBlocksRequestMsg struct {
 	StartHash string // The hash of the latest block the requester knows
 	StopHash  string // Optional: Request blocks up to this hash (can be empty)
 }
 
-// Response containing the requested blocks
+// BlocksResponseMsg containing the requested blocks
 type BlocksResponseMsg struct {
 	Blocks []Block // The list of blocks being sent
 	More   bool    // Indicates if the sender has more blocks after this batch
@@ -152,6 +152,7 @@ func (n *Node) SubmitContent(content string) error {
 	return nil
 }
 
+// SubmitContentWithTimestamp adds content to the node's mempool with a specific timestamp
 func (n *Node) SubmitContentWithTimestamp(content string, timestamp time.Time) error {
 	transaction := transaction{
 		Content:   content,
@@ -220,7 +221,7 @@ func (n *Node) MineBlock() (*Block, error) {
 		targetPrefix += "0"
 	}
 
-	startTime := time.Now()
+	// startTime := time.Now()
 	// set nonce as a random number to avoid collisions
 	nonce := rand.Int63n(1000000)
 	// log.Printf("Node %s started mining...\n", n.Host.ID().ShortString())
@@ -239,8 +240,8 @@ func (n *Node) MineBlock() (*Block, error) {
 			hash := block.CalculateHash()
 			if hash[:difficulty] == targetPrefix {
 				block.Hash = hash
-				duration := time.Since(startTime)
-				log.Printf("Node %s found block! Hash: %s..., Nonce: %d, Time: %s\n", n.Host.ID().ShortString(), hash[:8], nonce, duration)
+				// duration := time.Since(startTime)
+				// log.Printf("Node %s found block! Hash: %s..., Nonce: %d, Time: %s\n", n.Host.ID().ShortString(), hash[:8], nonce, duration)
 
 				n.mu.Lock()
 				n.Mempool = n.Mempool[1:] // Remove the mined transaction from mempool
@@ -269,7 +270,7 @@ func (bc *Blockchain) NewBlock(transaction transaction, nonce int) *Block {
 	return block
 }
 
-// CalculateHash computes the hash of the block
+// CalculateHash computes the hash of the whole block
 func (b *Block) CalculateHash() string {
 
 	blockToHash := BlockToHash{
@@ -285,7 +286,6 @@ func (b *Block) CalculateHash() string {
 	return fmt.Sprintf("%x", sha256.Sum256(blockBytes))
 }
 
-// check the timestamp as well?
 // removeFromMempool removes a content from the mempool
 func (n *Node) removeFromMempool(block Block) {
 	n.mu.Lock()
@@ -298,7 +298,8 @@ func (n *Node) removeFromMempool(block Block) {
 	}
 }
 
-// if a new block is mined, the transaction is removed from the mempool but might Add block fail
+// AddBlock adds a block to the blockchain.
+// it also checks if the block is valid and adds it to the blockchain
 func (bc *Blockchain) AddBlock(block Block) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -393,6 +394,8 @@ func (bc *Blockchain) AddBlock(block Block) error {
 	return nil
 }
 
+// ChainPruning prunes the blockchain to keep only the longest chain.
+// we have this because we are storing all the blocks in the blockchain as a tree structure
 func (bc *Blockchain) ChainPruning() {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -483,6 +486,8 @@ func (bc *Blockchain) isValidBlock(block Block) error {
 	return nil
 }
 
+// DeDuplicate checks if a block is a duplicate.
+// it checks if the block is already in the chain
 func (bc *Blockchain) DeDuplicate(blocknode *BlockNode) bool {
 	// check if the block is already in the chain
 	block := blocknode.Block
@@ -517,7 +522,7 @@ func (n *Node) BroadcastBlock(block Block) error {
 
 // --- Node Methods ---
 
-// this function creates and initializes a new Node instance.
+// NewNode creates and initializes a new Node instance
 func NewNode(ctx context.Context, listenPort int, discoveryTag string) (*Node, error) {
 	nodeCtx, nodeCancel := context.WithCancel(ctx)
 
@@ -770,7 +775,7 @@ func (n *Node) recursiveFindCommonAncestor(peerId peer.ID, startHash string) (st
 	return "", fmt.Errorf("no more headers received")
 }
 
-// requestHeaders requests a batch of headers from a peer
+// requestHeaders requests a batch of headers from a peer to check if the chain is compatible
 func (n *Node) requestHeaders(peerId peer.ID, startHash, endHash string, limit int) ([]BlockHeader, error) {
 	ctx, cancel := context.WithTimeout(n.Ctx, 50*time.Second)
 	defer cancel()
@@ -939,7 +944,8 @@ func (n *Node) requestBlock(peerId peer.ID, blockHash string) (*Block, error) {
 	return &block, nil
 }
 
-// StartRecovery initiates the recovery process when a node rejoins the network
+// StartRecovery initiates the recovery process when a node rejoins the network.
+// this is done by streaming the chain info to the node and then syncing the missing blocks
 func (n *Node) StartRecovery() {
 	// log.Printf("Node %s starting recovery process...", n.Host.ID().ShortString())
 
@@ -1261,7 +1267,7 @@ func (n *Node) Stop() {
 
 // --- Libp2p Network Functions ---
 
-// makeHost creates a new libp2p Host.
+// makeHost creates a new libp2p Host
 func makeHost(_ context.Context, listenPort int) (host.Host, error) {
 	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)
 	h, err := libp2p.New(
@@ -1278,6 +1284,8 @@ func makeHost(_ context.Context, listenPort int) (host.Host, error) {
 
 // setupDiscovery initializes the Kademlia DHT for peer discovery,
 // focusing on local network discovery without connecting to default public bootstrap peers.
+// this is not really reliable in testing since discovery may take a while.
+// so we mannually connect each node to each other in the test cases
 func setupDiscovery(ctx context.Context, h host.Host) (*drouting.RoutingDiscovery, error) {
 	kademliaDHT, err := dht.New(ctx, h, dht.Mode(dht.ModeServer) /*, dht.ProtocolPrefix("/myapp") // Optional: Use custom protocol prefix for private DHT */)
 	if err != nil {
@@ -1446,7 +1454,7 @@ func (n *Node) pubsubHandler() {
 	}
 }
 
-// discoverPeers continuously looks for peers using the discovery service.
+// discoverPeers continuously looks for peers using the discovery service
 func (n *Node) discoverPeers() {
 	// log.Printf("Node %s starting peer discovery...\n", n.Host.ID().ShortString())
 	peerChan, err := n.Discovery.FindPeers(n.Ctx, n.DiscoveryTag)
