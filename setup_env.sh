@@ -1,1 +1,0 @@
-go mod init lab4 && go get github.com/libp2p/go-libp2p github.com/libp2p/go-libp2p-kad-dht github.com/libp2p/go-libp2p-pubsub

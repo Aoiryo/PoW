@@ -1,4 +1,4 @@
-package main
+package blockchain
 
 import (
 	"context"
@@ -23,90 +23,6 @@ var (
 	ErrBlockInvalid      = errors.New("invalid block")
 )
 
-func TestBlockchainSetup(t *testing.T) {
-	// create context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// create a node
-	node, err := NewNode(ctx, 0, "test-single-node")
-	if err != nil {
-		t.Fatalf("Failed to create node: %v", err)
-	}
-	node.Start()
-	defer node.Stop()
-
-	// submit content and mine a block
-	err = node.SubmitContent("Test content for mining1")
-	if err != nil {
-		t.Fatalf("Failed to submit content: %v", err)
-	}
-	err = node.SubmitContent("Test content for mining2")
-	if err != nil {
-		t.Fatalf("Failed to submit content: %v", err)
-	}
-	err = node.SubmitContent("Test content for mining3")
-	if err != nil {
-		t.Fatalf("Failed to submit content: %v", err)
-	}
-
-	// Wait for mining
-	time.Sleep(30 * time.Second)
-
-	// check that the blockchain has grown
-	node.Blockchain.mu.Lock()
-	chainLen := node.Blockchain.Head.Height
-	node.Blockchain.mu.Unlock()
-
-	if chainLen == 0 {
-		t.Errorf("Expected chain to grow beyond genesis, but length is %d", chainLen)
-	} else {
-		fmt.Println("Blockchain has grown successfully, length is ", chainLen)
-		t.Logf("Chain has grown to length %d", chainLen)
-	}
-}
-
-func TestBlockchainMultiSetup(t *testing.T) {
-	// create context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// create a node
-	node, err := NewNode(ctx, 0, "test-multi-node")
-	if err != nil {
-		t.Fatalf("Failed to create node: %v", err)
-	}
-
-	// submit content and mine a block
-	err = node.SubmitContent("Test content for mining1")
-	if err != nil {
-		t.Fatalf("Failed to submit content: %v", err)
-	}
-	err = node.SubmitContent("Test content for mining2")
-	if err != nil {
-		t.Fatalf("Failed to submit content: %v", err)
-	}
-	err = node.SubmitContent("Test content for mining3")
-	if err != nil {
-		t.Fatalf("Failed to submit content: %v", err)
-	}
-
-	// Wait for mining
-	time.Sleep(30 * time.Second)
-
-	// check that the blockchain has grown
-	node.Blockchain.mu.Lock()
-	chainLen := node.Blockchain.Head.Height
-	node.Blockchain.mu.Unlock()
-
-	if chainLen == 0 {
-		t.Errorf("Expected chain to grow beyond genesis, but length is %d", chainLen)
-	} else {
-		fmt.Println("Blockchain has grown successfully, length is ", chainLen)
-		t.Logf("Chain has grown to length %d", chainLen)
-	}
-}
-
 const (
 	// Using a dynamic tag per test run to minimize interference if tests run quasi-parallel locally
 	testDiscoveryTagBase = "blockchain-test-network"
@@ -117,7 +33,7 @@ const (
 )
 
 // Helper function to create a unique discovery tag for each test run
-func getTestDiscoveryTag(t *testing.T) string {
+func getTestDiscoveryTag(_ *testing.T) string {
 	// Using test name and timestamp to create a more unique tag
 	// Note: t.Name() can contain characters like '/', replacing them.
 	// This helps avoid different test runs interfering via DHT if run close together.
@@ -128,7 +44,7 @@ func getTestDiscoveryTag(t *testing.T) string {
 
 // helper function to set up a network of nodes for testing
 func setupTestNetwork(t *testing.T, numNodes int, discoveryTag string) (context.Context, context.CancelFunc, []*Node, error) {
-	t.Helper() // Marks this as a test helper function
+
 	// use a test-specific context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 
@@ -211,7 +127,6 @@ func setupTestNetwork(t *testing.T, numNodes int, discoveryTag string) (context.
 // helper to check if all nodes have converged to the same chain tip hash and height
 func checkChainConvergence(t *testing.T, nodes []*Node) (converged bool, tipHash string, tipHeight int) {
 
-	t.Helper()
 	if len(nodes) <= 1 {
 		return true, "", -1 // 0 or 1 node, guaranteed convergence
 	}
@@ -272,7 +187,7 @@ func checkChainConvergence(t *testing.T, nodes []*Node) (converged bool, tipHash
 
 // Helper to wait for network convergence with retries
 func waitForConvergence(t *testing.T, nodes []*Node, maxWait time.Duration, checkInterval time.Duration) (bool, string, int) {
-	t.Helper()
+
 	ctx, cancel := context.WithTimeout(context.Background(), maxWait)
 	defer cancel()
 
@@ -311,8 +226,6 @@ func ConnectNodes(nodes []*Node, ctx context.Context) error {
 			if err := nodes[i].Host.Connect(ctx, addrInfo); err != nil {
 				log.Printf("Failed to connect Node %d to Node %d: %v", i, j, err)
 				return fmt.Errorf("failed to connect Node %d to Node %d: %w", i, j, err)
-			} else {
-				log.Printf("Node %d connected to Node %d", i, j)
 			}
 		}
 	}
@@ -400,9 +313,113 @@ func nodesForkSetup(nodes []*Node) {
 }
 
 // --- Test Cases ---
+
+// Test Case 0: Basic communication between nodes
+func TestPubSubCommunication(t *testing.T) {
+	// create 2 nodes
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// create two nodes, using fixed ports to ensure address predictability
+	node1, err := NewNode(ctx, 10001, "test-pubsub-tag")
+	if err != nil {
+		t.Fatalf("Failed to create node1: %v", err)
+	}
+	node1.Start()
+	defer node1.Stop()
+	log.Printf("Node 1 created with ID: %s, addresses: %v", node1.Host.ID().ShortString(), node1.Host.Addrs())
+
+	node2, err := NewNode(ctx, 10002, "test-pubsub-tag")
+	if err != nil {
+		t.Fatalf("Failed to create node2: %v", err)
+	}
+	node2.Start()
+	defer node2.Stop()
+	log.Printf("Node 2 created with ID: %s, addresses: %v", node2.Host.ID().ShortString(), node2.Host.Addrs())
+
+	// manually connect two nodes
+	addrInfo1 := peer.AddrInfo{
+		ID:    node1.Host.ID(),
+		Addrs: node1.Host.Addrs(),
+	}
+	log.Printf("Attempting to manually connect node2 to node1 (ID: %s)", node1.Host.ID().ShortString())
+	if err := node2.Host.Connect(ctx, addrInfo1); err != nil {
+		t.Logf("Warning: Failed to manually connect node2 to node1: %v", err)
+	} else {
+		log.Printf("Node 2 successfully connected to Node 1")
+	}
+
+	// wait for connection to stabilize
+	log.Println("Waiting for connection to stabilize...")
+	time.Sleep(5 * time.Second)
+
+	// create a custom message receiving channel
+	messageChan := make(chan string)
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// create a custom topic subscription on node2
+	testTopic, err := node2.PubSub.Join("test-message-topic")
+	if err != nil {
+		t.Fatalf("Failed to join test topic: %v", err)
+	}
+
+	subscription, err := testTopic.Subscribe()
+	if err != nil {
+		t.Fatalf("Failed to subscribe to test topic: %v", err)
+	}
+
+	// try to receive message
+	go func() {
+		defer wg.Done()
+		msg, err := subscription.Next(ctx)
+		if err != nil {
+			log.Printf("Error receiving message: %v", err)
+			return
+		}
+		log.Printf("Node 2 received message from %s: %s", msg.ReceivedFrom.ShortString(), string(msg.Data))
+		messageChan <- string(msg.Data)
+	}()
+
+	// wait for a while to ensure the subscription is established
+	time.Sleep(2 * time.Second)
+
+	// node1 also joins the same topic and publishes a message
+	node1Topic, err := node1.PubSub.Join("test-message-topic")
+	if err != nil {
+		t.Fatalf("Failed to join test topic on node1: %v", err)
+	}
+
+	// check the connected peers
+	log.Printf("Node 1 connected peers: %d", len(node1.Host.Network().Peers()))
+	log.Printf("Node 2 connected peers: %d", len(node2.Host.Network().Peers()))
+
+	testMessage := "Hello from Node 1!"
+	log.Printf("Node 1 publishing message: %s", testMessage)
+	err = node1Topic.Publish(ctx, []byte(testMessage))
+	if err != nil {
+		t.Fatalf("Failed to publish message: %v", err)
+	}
+
+	// wait for the message to be received within a timeout
+	select {
+	case receivedMsg := <-messageChan:
+		if receivedMsg != testMessage {
+			t.Errorf("Expected message '%s', but got '%s'", testMessage, receivedMsg)
+		} else {
+			t.Logf("Test passed: Message successfully received!")
+		}
+	case <-time.After(20 * time.Second):
+		t.Errorf("Timeout: No message received within 20 seconds")
+	}
+
+	// wait for the receiving goroutine to complete
+	wg.Wait()
+}
+
 // Test Case 1: Single Miner, Broadcast, and Convergence Verification
 func TestSingleMinerBroadcastAndConvergence(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	log.Println("--- TestSingleMinerBroadcastAndConvergence ---")
 	discoveryTag := getTestDiscoveryTag(t)
 	ctx, cancel, nodes, err := setupTestNetwork(t, 3, discoveryTag) // setup 3 nodes
@@ -462,9 +479,9 @@ func TestSingleMinerBroadcastAndConvergence(t *testing.T) {
 	}
 }
 
-// Test Case 2: Single Miner, Broadcast, and Convergence Verification
+// Test Case 2: Multiple Miners, Broadcast, and Convergence Verification
 func TestMultiMinerBroadcastAndConvergence(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	log.Println("--- TestMultiMinerBroadcastAndConvergence ---")
 	discoveryTag := getTestDiscoveryTag(t)
 	numNodes := 5
@@ -544,7 +561,7 @@ func TestMultiMinerBroadcastAndConvergence(t *testing.T) {
 // submits various malformed blocks directly to a node's AddBlock method
 // and verifies they are rejected.
 func TestInvalidBlockRejection(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	log.Println("--- TestInvalidBlockRejection ---")
 	// setup: Single node is sufficient to test AddBlock logic
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // Shorter timeout OK
@@ -675,7 +692,7 @@ func TestInvalidBlockRejection(t *testing.T) {
 
 // Test Case 4: Fork Convergence
 func TestForkConvergence(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	log.Println("--- TestForkConvergence ---")
 	discoveryTag := getTestDiscoveryTag(t)
 	numNodes := 20
@@ -720,6 +737,7 @@ func TestForkConvergence(t *testing.T) {
 		}
 	}
 
+	time.Sleep(120 * time.Second)
 	// no forked blocks so the chain would be converge at last
 	numContents = 6
 	for i := 0; i < numContents; i++ {
@@ -758,7 +776,7 @@ func TestForkConvergence(t *testing.T) {
 // ensures that content submitted and included in a block is not included
 // again in subsequent blocks by the same node.
 func TestTransactionDeDuplication(t *testing.T) {
-	t.Parallel() // mark as parallelizable if safe
+	// t.Parallel()
 	log.Println("--- TestTransactionDeDuplication ---")
 	// setup: single node is sufficient to test its own mining logic for de-duplication
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

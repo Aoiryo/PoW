@@ -1,4 +1,4 @@
-package main
+package blockchain
 
 import (
 	"context"
@@ -29,11 +29,13 @@ import (
 var difficulty = 1 // Difficulty level for PoW
 var ErrOutOfRange = errors.New("block index out of range")
 
+// --- Transaction ---
 type transaction struct {
 	Content   string
 	Timestamp time.Time
 }
 
+// this is the data that is hashed to produce the block hash
 type BlockToHash struct {
 	Index      int
 	Timestamp  time.Time
@@ -43,6 +45,7 @@ type BlockToHash struct {
 	Difficulty int
 }
 
+// this is the block that is stored in the blockchain
 type Block struct {
 	Index     int
 	Timestamp time.Time
@@ -52,6 +55,7 @@ type Block struct {
 	Hash      string
 }
 
+// this is the wrapper node that is stored in the tree structure
 type BlockNode struct {
 	Block    Block
 	Parent   *BlockNode
@@ -59,6 +63,7 @@ type BlockNode struct {
 	Height   int
 }
 
+// this is the local blockchain that is stored in the node
 type Blockchain struct {
 	mu         sync.Mutex
 	BlockIndex map[string]*BlockNode
@@ -66,6 +71,7 @@ type Blockchain struct {
 	Head       *BlockNode
 }
 
+// this is the miner node
 type Node struct {
 	mu             sync.Mutex
 	Host           host.Host
@@ -142,7 +148,7 @@ func (n *Node) SubmitContent(content string) error {
 	defer n.mu.Unlock()
 	n.Mempool = append(n.Mempool, transaction)
 
-	log.Printf("Node %s added content to mempool: %s\n", n.Host.ID().ShortString(), content)
+	// log.Printf("Node %s added content to mempool: %s\n", n.Host.ID().ShortString(), content)
 	return nil
 }
 
@@ -155,7 +161,7 @@ func (n *Node) SubmitContentWithTimestamp(content string, timestamp time.Time) e
 	defer n.mu.Unlock()
 	n.Mempool = append(n.Mempool, transaction)
 
-	log.Printf("Node %s added content to mempool: %s\n", n.Host.ID().ShortString(), content)
+	// log.Printf("Node %s added content to mempool: %s\n", n.Host.ID().ShortString(), content)
 	return nil
 }
 
@@ -164,7 +170,7 @@ func (n *Node) SubmitContentWithTimestamp(content string, timestamp time.Time) e
 // mine whenever mempool is not empty, with a small delay
 func (n *Node) miningLoop() {
 	defer n.miningLoopWait.Done()
-	log.Printf("Node %s started mining loop.", n.Host.ID().ShortString())
+	// log.Printf("Node %s started mining loop.", n.Host.ID().ShortString())
 
 	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
 	defer ticker.Stop()
@@ -177,30 +183,30 @@ func (n *Node) miningLoop() {
 			n.mu.Unlock()
 
 			if mempoolSize > 0 {
-				log.Printf("Node %s attempting to mine a block (mempool size: %d)...\n", n.Host.ID().ShortString(), mempoolSize)
+				// log.Printf("Node %s attempting to mine a block (mempool size: %d)...\n", n.Host.ID().ShortString(), mempoolSize)
 				newBlock, err := n.MineBlock()
 				if err != nil {
 					if err.Error() != "mempool is empty" && err.Error() != "mining cancelled" {
-						log.Printf("Node %s mining error: %v\n", n.Host.ID().ShortString(), err)
+						// log.Printf("Node %s mining error: %v\n", n.Host.ID().ShortString(), err)
 					}
 				} else if newBlock != nil {
 
 					addErr := n.Blockchain.AddBlock(*newBlock) // Add to own chain first
 					if addErr != nil {
-						log.Printf("Node %s failed to add own mined block: %v\n", n.Host.ID().ShortString(), addErr)
+						// log.Printf("Node %s failed to add own mined block: %v\n", n.Host.ID().ShortString(), addErr)
 					} else {
 						// Successfully added to own chain, remove from mempool
 						n.removeFromMempool(*newBlock)
 						// Broadcast the new block to other nodes
 						broadcastErr := n.BroadcastBlock(*newBlock) // Broadcast if added successfully
 						if broadcastErr != nil {
-							log.Printf("Node %s failed to broadcast block: %v\n", n.Host.ID().ShortString(), broadcastErr)
+							// log.Printf("Node %s failed to broadcast block: %v\n", n.Host.ID().ShortString(), broadcastErr)
 						}
 					}
 				}
 			}
 		case <-n.Ctx.Done():
-			log.Printf("Node %s stopping mining loop due to context cancellation.\n", n.Host.ID().ShortString())
+			// log.Printf("Node %s stopping mining loop due to context cancellation.\n", n.Host.ID().ShortString())
 			return
 		}
 	}
@@ -217,11 +223,11 @@ func (n *Node) MineBlock() (*Block, error) {
 	startTime := time.Now()
 	// set nonce as a random number to avoid collisions
 	nonce := rand.Int63n(1000000)
-	log.Printf("Node %s started mining...\n", n.Host.ID().ShortString())
+	// log.Printf("Node %s started mining...\n", n.Host.ID().ShortString())
 	for {
 		select {
 		case <-n.Ctx.Done():
-			log.Printf("Node %s mining cancelled.\n", n.Host.ID().ShortString())
+			// log.Printf("Node %s mining cancelled.\n", n.Host.ID().ShortString())
 			return nil, fmt.Errorf("mining cancelled")
 		default:
 			n.mu.Lock()
@@ -300,12 +306,12 @@ func (bc *Blockchain) AddBlock(block Block) error {
 	if block.Hash == "" {
 		block.Hash = block.CalculateHash()
 	}
-	log.Printf("Adding block %s at height %d with data: %s",
-		block.Hash[:8], block.Index, block.Data)
+	// log.Printf("Adding block %s at height %d with data: %s",
+	// 	block.Hash[:8], block.Index, block.Data)
 
 	// Special case for Genesis block - add it directly without validation
 	if block.Index == 0 {
-		log.Printf("Genesis block detected, adding without validation")
+		// log.Printf("Genesis block detected, adding without validation")
 		blocknode := &BlockNode{
 			Block:    block,
 			Parent:   nil,
@@ -315,7 +321,7 @@ func (bc *Blockchain) AddBlock(block Block) error {
 		bc.BlockIndex[block.Hash] = blocknode
 		bc.Tips[block.Hash] = blocknode
 		bc.Head = blocknode
-		log.Printf("Genesis block %s successfully added to blockchain", block.Hash[:8])
+		// log.Printf("Genesis block %s successfully added to blockchain", block.Hash[:8])
 		return nil
 	}
 
@@ -327,63 +333,63 @@ func (bc *Blockchain) AddBlock(block Block) error {
 	}
 
 	if len(bc.BlockIndex) == 0 {
-		log.Printf("Cannot add block %s - blockchain is empty (genesis block should exist)",
-			blocknode.Block.Hash[:8])
+		// log.Printf("Cannot add block %s - blockchain is empty (genesis block should exist)",
+		// 	blocknode.Block.Hash[:8])
 		return fmt.Errorf("cannot add block to empty chain (genesis block should exist)")
 	}
 
-	log.Printf("Validating block %s...", blocknode.Block.Hash[:8])
+	// log.Printf("Validating block %s...", blocknode.Block.Hash[:8])
 	err := bc.isValidBlock(blocknode.Block)
 	if errors.Is(err, ErrOutOfRange) {
 		return ErrOutOfRange
 	} else if err != nil {
-		log.Printf("Block %s validation failed: %v", blocknode.Block.Hash[:8], err)
+		// log.Printf("Block %s validation failed: %v", blocknode.Block.Hash[:8], err)
 		return fmt.Errorf("block %s is invalid: %v", blocknode.Block.Hash, err)
 	}
-	log.Printf("Block %s passed validation", blocknode.Block.Hash[:8])
+	// log.Printf("Block %s passed validation", blocknode.Block.Hash[:8])
 
 	prevhash := blocknode.Block.PreHash
 	// if prevhash is not in the chain, it's invalid
 	if _, ok := bc.BlockIndex[prevhash]; !ok {
-		log.Printf("Block %s parent hash %s not found in blockchain",
-			blocknode.Block.Hash[:8], prevhash[:8])
+		// log.Printf("Block %s parent hash %s not found in blockchain",
+		// 	blocknode.Block.Hash[:8], prevhash[:8])
 		return fmt.Errorf("block %s is invalid (parent block not found)", blocknode.Block.Hash)
 	}
-	log.Printf("Block %s parent block %s exists in chain",
-		blocknode.Block.Hash[:8], prevhash[:8])
+	// log.Printf("Block %s parent block %s exists in chain",
+	// 	blocknode.Block.Hash[:8], prevhash[:8])
 
 	// if block with same data and timestamp exists, it's a duplicate
-	log.Printf("Checking if block %s is a duplicate...", blocknode.Block.Hash[:8])
+	// log.Printf("Checking if block %s is a duplicate...", blocknode.Block.Hash[:8])
 	if !bc.DeDuplicate(blocknode) {
-		log.Printf("Block %s is a duplicate", blocknode.Block.Hash[:8])
+		// log.Printf("Block %s is a duplicate", blocknode.Block.Hash[:8])
 		return fmt.Errorf("block %s is a duplicate", blocknode.Block.Hash)
 	}
-	log.Printf("Block %s is not a duplicate", blocknode.Block.Hash[:8])
+	// log.Printf("Block %s is not a duplicate", blocknode.Block.Hash[:8])
 
 	// if prevhash is in the chain and not a duplicate, add it to the chain
-	log.Printf("Adding block %s as child of %s",
-		blocknode.Block.Hash[:8], prevhash[:8])
+	// log.Printf("Adding block %s as child of %s",
+	// blocknode.Block.Hash[:8], prevhash[:8])
 	bc.BlockIndex[prevhash].Children = append(bc.BlockIndex[prevhash].Children, blocknode)
 	bc.BlockIndex[blocknode.Block.Hash] = blocknode
 	blocknode.Parent = bc.BlockIndex[prevhash]
 
 	// if it updated the longest chain, update the head
 	if blocknode.Height > bc.Head.Height {
-		log.Printf("Block %s at height %d is now the new HEAD (previous height: %d, hash: %s)",
-			blocknode.Block.Hash[:8], blocknode.Height, bc.Head.Height, bc.Head.Block.Hash[:8])
+		// log.Printf("Block %s at height %d is now the new HEAD (previous height: %d, hash: %s)",
+		// 	blocknode.Block.Hash[:8], blocknode.Height, bc.Head.Height, bc.Head.Block.Hash[:8])
 		bc.Head = blocknode
 	} else {
-		log.Printf("Block %s added as a side chain (current head height: %d, hash: %s)",
-			blocknode.Block.Hash[:8], bc.Head.Height, bc.Head.Block.Hash[:8])
+		// log.Printf("Block %s added as a side chain (current head height: %d, hash: %s)",
+		// 	blocknode.Block.Hash[:8], bc.Head.Height, bc.Head.Block.Hash[:8])
 	}
 
 	// if it parents previously a tip, update the tips
 	delete(bc.Tips, prevhash)
 	bc.Tips[blocknode.Block.Hash] = blocknode
-	log.Printf("Block %s added to tips map, total tips: %d",
-		blocknode.Block.Hash[:8], len(bc.Tips))
+	// log.Printf("Block %s added to tips map, total tips: %d",
+	// 	blocknode.Block.Hash[:8], len(bc.Tips))
 
-	log.Printf("Block %s successfully added to blockchain", blocknode.Block.Hash[:8])
+	// log.Printf("Block %s successfully added to blockchain", blocknode.Block.Hash[:8])
 	return nil
 }
 
@@ -426,9 +432,9 @@ func (bc *Blockchain) ChainPruning() {
 
 // isValidBlock validates a single block relative to the current chain state
 func (bc *Blockchain) isValidBlock(block Block) error {
-	log.Printf("Validating block %s at height %d with data: %s", block.Hash[:8], block.Index, block.Data)
-	log.Printf("Block details - Index: %d, PreHash: %s, Nonce: %d",
-		block.Index, block.PreHash[:8], block.Nonce)
+	// log.Printf("Validating block %s at height %d with data: %s", block.Hash[:8], block.Index, block.Data)
+	// log.Printf("Block details - Index: %d, PreHash: %s, Nonce: %d",
+	// 	block.Index, block.PreHash[:8], block.Nonce)
 
 	targetPrefix := ""
 	for i := 0; i < difficulty; i++ {
@@ -438,41 +444,41 @@ func (bc *Blockchain) isValidBlock(block Block) error {
 
 	// Validate hash matches the calculated hash
 	if calculatedHash != block.Hash {
-		log.Printf("Validation Error: Hash mismatch for block %s", block.Hash[:8])
-		log.Printf("  Provided hash: %s", block.Hash[:16])
-		log.Printf("  Calculated hash: %s", calculatedHash[:16])
+		// log.Printf("Validation Error: Hash mismatch for block %s", block.Hash[:8])
+		// log.Printf("  Provided hash: %s", block.Hash[:16])
+		// log.Printf("  Calculated hash: %s", calculatedHash[:16])
 		return fmt.Errorf("hash mismatch for block")
 	}
 
 	// Validate PoW difficulty
 	if calculatedHash[:difficulty] != targetPrefix {
-		log.Printf("Validation Error: PoW difficulty not met for block %s", block.Hash[:8])
-		log.Printf("  Required prefix: %s", targetPrefix)
-		log.Printf("  Actual prefix: %s", calculatedHash[:difficulty])
+		// log.Printf("Validation Error: PoW difficulty not met for block %s", block.Hash[:8])
+		// log.Printf("  Required prefix: %s", targetPrefix)
+		// log.Printf("  Actual prefix: %s", calculatedHash[:difficulty])
 		return fmt.Errorf("PoW difficulty not met for block")
 	}
 
 	if block.Index < 0 || block.Index > bc.Head.Height+1 {
-		log.Printf("Validation Error: Block index out of range for block %s", block.Hash[:8])
-		log.Printf("  Index: %d, Max allowed: %d", block.Index, bc.Head.Height+1)
+		// log.Printf("Validation Error: Block index out of range for block %s", block.Hash[:8])
+		// log.Printf("  Index: %d, Max allowed: %d", block.Index, bc.Head.Height+1)
 		return ErrOutOfRange
 	}
 
 	// check prevhash
 	if block.PreHash == "" {
-		log.Printf("Validation Error: Genesis block cannot have a parent")
+		// log.Printf("Validation Error: Genesis block cannot have a parent")
 		return ErrOutOfRange
 	}
 	if _, ok := bc.BlockIndex[block.PreHash]; !ok {
 		if block.Index == bc.Head.Height+1 {
-			log.Printf("Validation Error: Block index is height + 1 but parents not found %s", block.Hash[:8])
+			// log.Printf("Validation Error: Block index is height + 1 but parents not found %s", block.Hash[:8])
 			return ErrOutOfRange
 		}
-		log.Printf("Validation Error: Parent block %s not found in blockchain", block.PreHash[:8])
+		// log.Printf("Validation Error: Parent block %s not found in blockchain", block.PreHash[:8])
 		return ErrOutOfRange
 	}
 
-	log.Printf("Block %s successfully validated", block.Hash[:8])
+	// log.Printf("Block %s successfully validated", block.Hash[:8])
 	// and more...
 	return nil
 }
@@ -495,7 +501,7 @@ func (bc *Blockchain) DeDuplicate(blocknode *BlockNode) bool {
 
 // BroadcastBlock uses Libp2p PubSub to broadcast a newly mined block.
 func (n *Node) BroadcastBlock(block Block) error {
-	log.Printf("Node %s broadcasting block %s via PubSub...\n", n.Host.ID().ShortString(), block.Hash[:8])
+	// log.Printf("Node %s broadcasting block %s via PubSub...\n", n.Host.ID().ShortString(), block.Hash[:8])
 	blockBytes, err := json.Marshal(block)
 	if err != nil {
 		return fmt.Errorf("failed to marshal block for broadcast: %w", err)
@@ -505,7 +511,7 @@ func (n *Node) BroadcastBlock(block Block) error {
 	if err != nil {
 		return fmt.Errorf("failed to publish block to pubsub topic: %w", err)
 	}
-	log.Printf("Node %s: Successfully published block %s to topic %s\n", n.Host.ID().ShortString(), block.Hash[:8], n.BlockTopic.String())
+	// log.Printf("Node %s: Successfully published block %s to topic %s\n", n.Host.ID().ShortString(), block.Hash[:8], n.BlockTopic.String())
 	return nil
 }
 
@@ -623,8 +629,8 @@ func (n *Node) findLongestChainFromPeers() (peer.ID, int, string, error) {
 
 		height, hash, err := n.requestChainInfo(peerId)
 		if err != nil {
-			log.Printf("Node %s: Failed to get chain info from peer %s: %v",
-				n.Host.ID().ShortString(), peerId.ShortString(), err)
+			// log.Printf("Node %s: Failed to get chain info from peer %s: %v",
+			// 	n.Host.ID().ShortString(), peerId.ShortString(), err)
 			continue
 		}
 
@@ -639,56 +645,56 @@ func (n *Node) findLongestChainFromPeers() (peer.ID, int, string, error) {
 		return longestChainPeer, 0, "", fmt.Errorf("failed to find any valid chains from peers")
 	}
 
-	log.Printf("Node %s: Found longest chain from peer %s with height %d and tip hash %s",
-		n.Host.ID().ShortString(), longestChainPeer.ShortString(), maxHeight, tipHash)
+	// log.Printf("Node %s: Found longest chain from peer %s with height %d and tip hash %s",
+	// 	n.Host.ID().ShortString(), longestChainPeer.ShortString(), maxHeight, tipHash)
 
 	return longestChainPeer, maxHeight, tipHash, nil
 }
 
 // findCommonAncestor finds the common ancestor between this node's chain and the peer's chain
 func (n *Node) findCommonAncestor(peerId peer.ID, peerTipHash string) (string, error) {
-	log.Printf("Node %s: Starting search for common ancestor with peer %s from their tip %s",
-		n.Host.ID().ShortString(), peerId.ShortString(), peerTipHash[:8])
+	// log.Printf("Node %s: Starting search for common ancestor with peer %s from their tip %s",
+	// 	n.Host.ID().ShortString(), peerId.ShortString(), peerTipHash[:8])
 
 	// binary search approach to find common ancestor efficiently
 	// start with a chunk of headers from the peer's tip going backwards
-	log.Printf("Node %s: Requesting initial batch of headers from peer %s",
-		n.Host.ID().ShortString(), peerId.ShortString())
+	// log.Printf("Node %s: Requesting initial batch of headers from peer %s",
+	// 	n.Host.ID().ShortString(), peerId.ShortString())
 
 	headers, err := n.requestHeaders(peerId, peerTipHash, "", 100)
 	if err != nil {
 		return "", fmt.Errorf("failed to request headers: %w", err)
 	}
 
-	log.Printf("Node %s: Received %d headers from peer %s",
-		n.Host.ID().ShortString(), len(headers), peerId.ShortString())
+	// log.Printf("Node %s: Received %d headers from peer %s",
+	// 	n.Host.ID().ShortString(), len(headers), peerId.ShortString())
 
 	// Print some info about the received headers
-	if len(headers) > 0 {
-		log.Printf("Node %s: Headers range from height %d (hash: %s) to height %d (hash: %s)",
-			n.Host.ID().ShortString(),
-			headers[0].Index, headers[0].Hash[:8],
-			headers[len(headers)-1].Index, headers[len(headers)-1].Hash[:8])
-	}
+	// if len(headers) > 0 {
+	// 	log.Printf("Node %s: Headers range from height %d (hash: %s) to height %d (hash: %s)",
+	// 		n.Host.ID().ShortString(),
+	// 		headers[0].Index, headers[0].Hash[:8],
+	// 		headers[len(headers)-1].Index, headers[len(headers)-1].Hash[:8])
+	// }
 
 	// check if any of these headers are in our blockchain
-	for i, header := range headers {
-		log.Printf("Node %s: Checking if header %d/%d (hash: %s, height: %d) exists in our chain",
-			n.Host.ID().ShortString(), i+1, len(headers), header.Hash[:8], header.Index)
+	for _, header := range headers {
+		// log.Printf("Node %s: Checking if header %d/%d (hash: %s, height: %d) exists in our chain",
+		// 	n.Host.ID().ShortString(), i+1, len(headers), header.Hash[:8], header.Index)
 
 		n.Blockchain.mu.Lock()
 		_, exists := n.Blockchain.BlockIndex[header.Hash]
 		n.Blockchain.mu.Unlock()
 
 		if exists {
-			log.Printf("Node %s: Found common ancestor at block %s (height: %d)",
-				n.Host.ID().ShortString(), header.Hash[:8], header.Index)
+			// log.Printf("Node %s: Found common ancestor at block %s (height: %d)",
+			// 	n.Host.ID().ShortString(), header.Hash[:8], header.Index)
 			return header.Hash, nil
 		}
 
 		if header.PreHash == "" {
 			// this is the genesis block - always a valid common ancestor
-			log.Printf("Node %s: Genesis block found as common ancestor", n.Host.ID().ShortString())
+			// log.Printf("Node %s: Genesis block found as common ancestor", n.Host.ID().ShortString())
 			return header.Hash, nil
 		}
 	}
@@ -696,71 +702,71 @@ func (n *Node) findCommonAncestor(peerId peer.ID, peerTipHash string) (string, e
 	// if not found in the first batch, continue with the oldest header from previous batch
 	if len(headers) > 0 {
 		oldestHeader := headers[len(headers)-1]
-		log.Printf("Node %s: No common ancestor in first batch, continuing search from block %s (height: %d)",
-			n.Host.ID().ShortString(), oldestHeader.PreHash[:8], oldestHeader.Index-1)
+		// log.Printf("Node %s: No common ancestor in first batch, continuing search from block %s (height: %d)",
+		// 	n.Host.ID().ShortString(), oldestHeader.PreHash[:8], oldestHeader.Index-1)
 		return n.recursiveFindCommonAncestor(peerId, oldestHeader.PreHash)
 	}
 
 	// if we get here, we couldn't find a common ancestor even at genesis
-	log.Printf("Node %s: Failed to find any common ancestor with peer %s",
-		n.Host.ID().ShortString(), peerId.ShortString())
+	// log.Printf("Node %s: Failed to find any common ancestor with peer %s",
+	// 	n.Host.ID().ShortString(), peerId.ShortString())
 	return "", fmt.Errorf("no common ancestor found, chains may be incompatible")
 }
 
 // recursiveFindCommonAncestor is a helper for findCommonAncestor that recursively searches backwards
 func (n *Node) recursiveFindCommonAncestor(peerId peer.ID, startHash string) (string, error) {
-	log.Printf("Node %s: Recursively searching for common ancestor from hash %s",
-		n.Host.ID().ShortString(), startHash[:8])
+	// log.Printf("Node %s: Recursively searching for common ancestor from hash %s",
+	// 	n.Host.ID().ShortString(), startHash[:8])
 
 	headers, err := n.requestHeaders(peerId, startHash, "", 100)
 	if err != nil {
 		return "", fmt.Errorf("failed to request headers: %w", err)
 	}
 
-	log.Printf("Node %s: Received %d more headers in recursive search",
-		n.Host.ID().ShortString(), len(headers))
+	// log.Printf("Node %s: Received %d more headers in recursive search",
+	// 	n.Host.ID().ShortString(), len(headers))
 
 	// Print some info about the received headers if we got any
-	if len(headers) > 0 {
-		log.Printf("Node %s: Headers range from height %d (hash: %s) to height %d (hash: %s)",
-			n.Host.ID().ShortString(),
-			headers[0].Index, headers[0].Hash[:8],
-			headers[len(headers)-1].Index, headers[len(headers)-1].Hash[:8])
-	}
+	// if len(headers) > 0 {
+	// 	log.Printf("Node %s: Headers range from height %d (hash: %s) to height %d (hash: %s)",
+	// 		n.Host.ID().ShortString(),
+	// 		headers[0].Index, headers[0].Hash[:8],
+	// 		headers[len(headers)-1].Index, headers[len(headers)-1].Hash[:8])
+	// }
 
 	// check if any of these headers are in our blockchain
-	for i, header := range headers {
-		log.Printf("Node %s: Checking if header %d/%d (hash: %s, height: %d) exists in our chain",
-			n.Host.ID().ShortString(), i+1, len(headers), header.Hash[:8], header.Index)
+	for _, header := range headers {
+		// log.Printf("Node %s: Checking if header %d/%d (hash: %s, height: %d) exists in our chain",
+		// 	n.Host.ID().ShortString(), i+1, len(headers), header.Hash[:8], header.Index)
 
 		n.Blockchain.mu.Lock()
 		_, exists := n.Blockchain.BlockIndex[header.Hash]
 		n.Blockchain.mu.Unlock()
 
 		if exists {
-			log.Printf("Node %s: Found common ancestor at block %s (height: %d) during recursive search",
-				n.Host.ID().ShortString(), header.Hash[:8], header.Index)
+			// log.Printf("Node %s: Found common ancestor at block %s (height: %d) during recursive search",
+			// 	n.Host.ID().ShortString(), header.Hash[:8], header.Index)
 			return header.Hash, nil
 		}
 	}
 
 	// if we reach genesis block without finding common ancestor
 	if len(headers) > 0 && headers[len(headers)-1].PreHash == "" {
-		log.Printf("Node %s: Reached genesis without finding common ancestor, chains may be incompatible",
-			n.Host.ID().ShortString())
+		// log.Printf("Node %s: Reached genesis without finding common ancestor, chains may be incompatible",
+		// 	n.Host.ID().ShortString())
 		return "", fmt.Errorf("reached genesis without finding common ancestor")
 	}
 
 	// continue with the oldest header from this batch
 	if len(headers) > 0 {
 		oldestHeader := headers[len(headers)-1]
-		log.Printf("Node %s: Continuing recursive search from block %s (height: %d)",
-			n.Host.ID().ShortString(), oldestHeader.PreHash[:8], oldestHeader.Index-1)
+		// log.Printf("Node %s: Continuing recursive search from block %s (height: %d)",
+		// 	n.Host.ID().ShortString(), oldestHeader.PreHash[:8], oldestHeader.Index-1)
 		return n.recursiveFindCommonAncestor(peerId, oldestHeader.PreHash)
 	}
 
-	log.Printf("Node %s: No more headers received in recursive search",
-		n.Host.ID().ShortString())
+	// log.Printf("Node %s: No more headers received in recursive search",
+	// 	n.Host.ID().ShortString())
 	return "", fmt.Errorf("no more headers received")
 }
 
@@ -828,14 +834,14 @@ func (n *Node) syncMissingBlocks(peerId peer.ID, commonAncestorHash, tipHash str
 		return fmt.Errorf("failed to request headers for sync: %w", err)
 	}
 
-	log.Printf("Node %s: Retrieved %d headers to sync from peer %s",
-		n.Host.ID().ShortString(), len(headers), peerId.ShortString())
+	// log.Printf("Node %s: Retrieved %d headers to sync from peer %s",
+	// 	n.Host.ID().ShortString(), len(headers), peerId.ShortString())
 
 	// Display all the headers we need to sync
-	for i, header := range headers {
-		log.Printf("Node %s: [%d/%d] Need to sync block: %s (height: %d)",
-			n.Host.ID().ShortString(), i+1, len(headers), header.Hash[:8], header.Index)
-	}
+	// for i, header := range headers {
+	// 	log.Printf("Node %s: [%d/%d] Need to sync block: %s (height: %d)",
+	// 		n.Host.ID().ShortString(), i+1, len(headers), header.Hash[:8], header.Index)
+	// }
 
 	// process headers from oldest to newest (reverse the order)
 	for i := len(headers) - 1; i >= 0; i-- {
@@ -847,13 +853,13 @@ func (n *Node) syncMissingBlocks(peerId peer.ID, commonAncestorHash, tipHash str
 		n.Blockchain.mu.Unlock()
 
 		if exists {
-			log.Printf("Node %s: Already have block %s, skipping",
-				n.Host.ID().ShortString(), header.Hash[:8])
+			// log.Printf("Node %s: Already have block %s, skipping",
+			// 	n.Host.ID().ShortString(), header.Hash[:8])
 			continue
 		}
 
-		log.Printf("Node %s: Requesting block %s at height %d from peer %s",
-			n.Host.ID().ShortString(), header.Hash[:8], header.Index, peerId.ShortString())
+		// log.Printf("Node %s: Requesting block %s at height %d from peer %s",
+		// 	n.Host.ID().ShortString(), header.Hash[:8], header.Index, peerId.ShortString())
 
 		// request and process the block
 		block, err := n.requestBlock(peerId, header.Hash)
@@ -861,20 +867,20 @@ func (n *Node) syncMissingBlocks(peerId peer.ID, commonAncestorHash, tipHash str
 			return fmt.Errorf("failed to request block %s: %w", header.Hash[:8], err)
 		}
 
-		log.Printf("Node %s: Received block %s, attempting to add to chain",
-			n.Host.ID().ShortString(), block.Hash[:8])
+		// log.Printf("Node %s: Received block %s, attempting to add to chain",
+		// 	n.Host.ID().ShortString(), block.Hash[:8])
 
 		// validate and add the block to our chain
 		if err := n.Blockchain.AddBlock(*block); err != nil {
 			return fmt.Errorf("failed to add block %s to chain: %w", header.Hash[:8], err)
 		}
 
-		log.Printf("Node %s: Successfully recovered block %s at height %d",
-			n.Host.ID().ShortString(), block.Hash[:8], block.Index)
+		// log.Printf("Node %s: Successfully recovered block %s at height %d",
+		// 	n.Host.ID().ShortString(), block.Hash[:8], block.Index)
 	}
 
-	log.Printf("Node %s: Completed syncing all blocks from peer %s",
-		n.Host.ID().ShortString(), peerId.ShortString())
+	// log.Printf("Node %s: Completed syncing all blocks from peer %s",
+	// 	n.Host.ID().ShortString(), peerId.ShortString())
 
 	return nil
 }
@@ -935,43 +941,43 @@ func (n *Node) requestBlock(peerId peer.ID, blockHash string) (*Block, error) {
 
 // StartRecovery initiates the recovery process when a node rejoins the network
 func (n *Node) StartRecovery() {
-	log.Printf("Node %s starting recovery process...", n.Host.ID().ShortString())
+	// log.Printf("Node %s starting recovery process...", n.Host.ID().ShortString())
 
 	// 1. connect to peers and find the longest chain
-	longestChainPeer, tipHeight, tipHash, err := n.findLongestChainFromPeers()
+	longestChainPeer, _, tipHash, err := n.findLongestChainFromPeers()
 	if err != nil {
-		log.Printf("Node %s: Failed to find longest chain: %v", n.Host.ID().ShortString(), err)
+		// log.Printf("Node %s: Failed to find longest chain: %v", n.Host.ID().ShortString(), err)
 		return
 	}
 
-	log.Printf("Node %s: Found longest chain with height %d and tip %s from peer %s",
-		n.Host.ID().ShortString(), tipHeight, tipHash[:8], longestChainPeer.ShortString())
+	// log.Printf("Node %s: Found longest chain with height %d and tip %s from peer %s",
+	// 	n.Host.ID().ShortString(), tipHeight, tipHash[:8], longestChainPeer.ShortString())
 
 	// 2. find common ancestor
 	commonAncestor, err := n.findCommonAncestor(longestChainPeer, tipHash)
 	if err != nil {
-		log.Printf("Node %s: Failed to find common ancestor: %v", n.Host.ID().ShortString(), err)
+		// log.Printf("Node %s: Failed to find common ancestor: %v", n.Host.ID().ShortString(), err)
 		return
 	}
 
-	log.Printf("Node %s: Found common ancestor at block %s",
-		n.Host.ID().ShortString(), commonAncestor[:8])
+	// log.Printf("Node %s: Found common ancestor at block %s",
+	// 	n.Host.ID().ShortString(), commonAncestor[:8])
 
 	// 3. request and process missing blocks
 	err = n.syncMissingBlocks(longestChainPeer, commonAncestor, tipHash)
 	if err != nil {
-		log.Printf("Node %s: Failed to sync missing blocks: %v", n.Host.ID().ShortString(), err)
+		// log.Printf("Node %s: Failed to sync missing blocks: %v", n.Host.ID().ShortString(), err)
 		return
 	}
 
-	log.Printf("Node %s: Recovery completed successfully", n.Host.ID().ShortString())
+	// log.Printf("Node %s: Recovery completed successfully", n.Host.ID().ShortString())
 }
 
 // handleChainInfoStream handles requests for chain height and tip hash
 func (n *Node) handleChainInfoStream(stream network.Stream) {
-	remotePeer := stream.Conn().RemotePeer()
-	log.Printf("Node %s: Received chain info request from %s",
-		n.Host.ID().ShortString(), remotePeer.ShortString())
+	// remotePeer := stream.Conn().RemotePeer()
+	// log.Printf("Node %s: Received chain info request from %s",
+	// 	n.Host.ID().ShortString(), remotePeer.ShortString())
 
 	// read request (empty in this case, just need to consume it)
 	// buf := make([]byte, 128)
@@ -994,14 +1000,14 @@ func (n *Node) handleChainInfoStream(stream network.Stream) {
 
 	responseBytes, err := json.Marshal(response)
 	if err != nil {
-		log.Printf("Node %s: Failed to marshal chain info response: %v", n.Host.ID().ShortString(), err)
+		// log.Printf("Node %s: Failed to marshal chain info response: %v", n.Host.ID().ShortString(), err)
 		stream.Reset()
 		return
 	}
 
 	// send response
 	if _, err := stream.Write(responseBytes); err != nil {
-		log.Printf("Node %s: Failed to write chain info response: %v", n.Host.ID().ShortString(), err)
+		// log.Printf("Node %s: Failed to write chain info response: %v", n.Host.ID().ShortString(), err)
 		stream.Reset()
 		return
 	}
@@ -1011,15 +1017,15 @@ func (n *Node) handleChainInfoStream(stream network.Stream) {
 
 // handleHeadersStream handles requests for block headers
 func (n *Node) handleHeadersStream(stream network.Stream) {
-	remotePeer := stream.Conn().RemotePeer()
-	log.Printf("Node %s: Received headers request from %s",
-		n.Host.ID().ShortString(), remotePeer.ShortString())
+	// remotePeer := stream.Conn().RemotePeer()
+	// log.Printf("Node %s: Received headers request from %s",
+	// 	n.Host.ID().ShortString(), remotePeer.ShortString())
 
 	// read request
 	buf := make([]byte, 4096)
 	bytesRead, err := stream.Read(buf)
 	if err != nil && err != io.EOF {
-		log.Printf("Node %s: Error reading headers request: %v", n.Host.ID().ShortString(), err)
+		// log.Printf("Node %s: Error reading headers request: %v", n.Host.ID().ShortString(), err)
 		stream.Reset()
 		return
 	}
@@ -1027,14 +1033,14 @@ func (n *Node) handleHeadersStream(stream network.Stream) {
 	// unmarshal request
 	var request RecoveryMessage
 	if err := json.Unmarshal(buf[:bytesRead], &request); err != nil {
-		log.Printf("Node %s: Failed to unmarshal headers request: %v", n.Host.ID().ShortString(), err)
+		// log.Printf("Node %s: Failed to unmarshal headers request: %v", n.Host.ID().ShortString(), err)
 		stream.Reset()
 		return
 	}
 
 	if request.Type != RequestHeaders {
-		log.Printf("Node %s: Unexpected message type in headers request: %d",
-			n.Host.ID().ShortString(), request.Type)
+		// log.Printf("Node %s: Unexpected message type in headers request: %d",
+		// 	n.Host.ID().ShortString(), request.Type)
 		stream.Reset()
 		return
 	}
@@ -1211,27 +1217,27 @@ func (n *Node) Start() {
 
 	// start Discovery processes
 	dutil.Advertise(n.Ctx, n.Discovery, n.DiscoveryTag)
-	log.Printf("Node %s advertising with tag %s\n", n.Host.ID().ShortString(), n.DiscoveryTag)
+	// log.Printf("Node %s advertising with tag %s\n", n.Host.ID().ShortString(), n.DiscoveryTag)
 	go n.discoverPeers()
 
 	recoveryNeeded := n.checkRecoveryNeeded()
 	if recoveryNeeded {
-		log.Printf("Node %s detected need for recovery, starting sync process...", n.Host.ID().ShortString())
+		// log.Printf("Node %s detected need for recovery, starting sync process...", n.Host.ID().ShortString())
 		n.StartRecovery() // only start mining after recovery
 	} else {
-		log.Printf("Node %s: No recovery needed, blockchain is up to date or no peers available.", n.Host.ID().ShortString())
+		// log.Printf("Node %s: No recovery needed, blockchain is up to date or no peers available.", n.Host.ID().ShortString())
 	}
 
 	// go to the mining loop
 	n.miningLoopWait.Add(1)
 	go n.miningLoop()
 
-	log.Printf("Node %s started successfully.", n.Host.ID().ShortString())
+	// log.Printf("Node %s started successfully.", n.Host.ID().ShortString())
 }
 
 // stop gracefully shuts down the node's background processes and closes the host.
 func (n *Node) Stop() {
-	log.Printf("Stopping node %s...", n.Host.ID().ShortString())
+	// log.Printf("Stopping node %s...", n.Host.ID().ShortString())
 	// cancel the context to signal goroutines to stop
 	n.cancel()
 
@@ -1248,15 +1254,15 @@ func (n *Node) Stop() {
 
 	// close the host
 	if err := n.Host.Close(); err != nil {
-		log.Printf("Error closing host for node %s: %v", n.Host.ID().ShortString(), err)
+		// log.Printf("Error closing host for node %s: %v", n.Host.ID().ShortString(), err)
 	}
-	log.Printf("Node %s stopped.", n.Host.ID().ShortString())
+	// log.Printf("Node %s stopped.", n.Host.ID().ShortString())
 }
 
 // --- Libp2p Network Functions ---
 
 // makeHost creates a new libp2p Host.
-func makeHost(ctx context.Context, listenPort int) (host.Host, error) {
+func makeHost(_ context.Context, listenPort int) (host.Host, error) {
 	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)
 	h, err := libp2p.New(
 		libp2p.ListenAddrStrings(listenAddr),
@@ -1266,7 +1272,7 @@ func makeHost(ctx context.Context, listenPort int) (host.Host, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
-	log.Printf("Host created with ID: %s, listening on %s\n", h.ID().ShortString(), listenAddr)
+	// log.Printf("Host created with ID: %s, listening on %s\n", h.ID().ShortString(), listenAddr)
 	return h, nil
 }
 
@@ -1277,21 +1283,21 @@ func setupDiscovery(ctx context.Context, h host.Host) (*drouting.RoutingDiscover
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DHT: %w", err)
 	}
-	log.Printf("Node %s: DHT created.", h.ID().ShortString())
+	// log.Printf("Node %s: DHT created.", h.ID().ShortString())
 
 	// this bootstrapping is necessary to initialize the local routing table
 	// and enable the DHT to function for local discovery.
-	log.Printf("Node %s: Bootstrapping the DHT (for local operation)...", h.ID().ShortString())
+	// log.Printf("Node %s: Bootstrapping the DHT (for local operation)...", h.ID().ShortString())
 	if err = kademliaDHT.Bootstrap(ctx); err != nil {
 		return nil, fmt.Errorf("failed to bootstrap DHT: %w", err)
 	}
-	log.Printf("Node %s: DHT bootstrapped successfully.", h.ID().ShortString())
+	// log.Printf("Node %s: DHT bootstrapped successfully.", h.ID().ShortString())
 
 	// use a RoutingDiscovery utility to advertise this node and discover
 	// other peers based on a shared rendezvous tag within the DHT network we form locally.
 	routingDiscovery := drouting.NewRoutingDiscovery(kademliaDHT)
 
-	log.Printf("Node %s: Routing Discovery initialized.", h.ID().ShortString())
+	// log.Printf("Node %s: Routing Discovery initialized.", h.ID().ShortString())
 	return routingDiscovery, nil
 }
 
@@ -1338,7 +1344,7 @@ func (n *Node) checkRecoveryNeeded() bool {
 	// get list of connected peers
 	peers := n.Host.Network().Peers()
 	if len(peers) == 0 {
-		log.Printf("Node %s: No peers to recover from\n", n.Host.ID().ShortString())
+		// log.Printf("Node %s: No peers to recover from\n", n.Host.ID().ShortString())
 		return false // No peers to recover from
 	}
 
@@ -1356,8 +1362,8 @@ func (n *Node) checkRecoveryNeeded() bool {
 		// get peer's chain height
 		height, _, err := n.requestChainInfo(peerId)
 		if err != nil {
-			log.Printf("Node %s: Failed to get chain info from peer %s: %v",
-				n.Host.ID().ShortString(), peerId.ShortString(), err)
+			// log.Printf("Node %s: Failed to get chain info from peer %s: %v",
+			// 	n.Host.ID().ShortString(), peerId.ShortString(), err)
 			continue
 		}
 
@@ -1372,7 +1378,7 @@ func (n *Node) checkRecoveryNeeded() bool {
 
 // pubsubHandler processes messages received via PubSub topics.
 func (n *Node) pubsubHandler() {
-	log.Printf("Node %s starting PubSub handler for topic %s\n", n.Host.ID().ShortString(), n.BlockSub.Topic())
+	// log.Printf("Node %s starting PubSub handler for topic %s\n", n.Host.ID().ShortString(), n.BlockSub.Topic())
 	failBuffer := []Block{}
 	flag := false
 	for {
@@ -1382,11 +1388,11 @@ func (n *Node) pubsubHandler() {
 			for i, block := range failBuffer {
 				err := n.Blockchain.AddBlock(block)
 				if err != nil {
-					log.Printf("Node %s: Failed to add block from fail buffer: %v\n", n.Host.ID().ShortString(), err)
+					// log.Printf("Node %s: Failed to add block from fail buffer: %v\n", n.Host.ID().ShortString(), err)
 					continue
 				}
-				log.Printf("Node %s: Block %s added successfully from fail buffer\n",
-					n.Host.ID().ShortString(), block.Hash[:8])
+				// log.Printf("Node %s: Block %s added successfully from fail buffer\n",
+				// 	n.Host.ID().ShortString(), block.Hash[:8])
 				failBuffer = append(failBuffer[:i], failBuffer[i+1:]...)
 				flag = true
 				break
@@ -1395,11 +1401,11 @@ func (n *Node) pubsubHandler() {
 			msg, err := n.BlockSub.Next(n.Ctx)
 			// check for context cancellation first
 			if n.Ctx.Err() != nil {
-				log.Printf("Node %s: PubSub handler stopping due to context cancellation.\n", n.Host.ID().ShortString())
+				// log.Printf("Node %s: PubSub handler stopping due to context cancellation.\n", n.Host.ID().ShortString())
 				return
 			}
 			if err != nil {
-				log.Printf("Node %s: Error reading from pubsub topic %s: %v\n", n.Host.ID().ShortString(), n.BlockSub.Topic(), err)
+				// log.Printf("Node %s: Error reading from pubsub topic %s: %v\n", n.Host.ID().ShortString(), n.BlockSub.Topic(), err)
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -1410,19 +1416,19 @@ func (n *Node) pubsubHandler() {
 
 			err = json.Unmarshal(msg.Data, &receivedBlock)
 			if err != nil {
-				log.Printf("Node %s: Error unmarshalling block from pubsub from %s: %v\n", n.Host.ID().ShortString(), msg.GetFrom().ShortString(), err)
+				// log.Printf("Node %s: Error unmarshalling block from pubsub from %s: %v\n", n.Host.ID().ShortString(), msg.GetFrom().ShortString(), err)
 				continue
 			}
 
-			log.Printf("Node %s: Received block %s via PubSub from %s.\n", n.Host.ID().ShortString(), receivedBlock.Hash[:8], msg.GetFrom().ShortString())
+			// log.Printf("Node %s: Received block %s via PubSub from %s.\n", n.Host.ID().ShortString(), receivedBlock.Hash[:8], msg.GetFrom().ShortString())
 
 			// try to add the block to our chain
 			err = n.Blockchain.AddBlock(receivedBlock)
 			if errors.Is(err, ErrOutOfRange) {
-				log.Println("Block added to fail buffer")
+				// log.Println("Block added to fail buffer")
 				failBuffer = append(failBuffer, receivedBlock)
 			} else if err != nil {
-				log.Printf("Node %s: Failed to add block from pubsub: %v\n", n.Host.ID().ShortString(), err)
+				// log.Printf("Node %s: Failed to add block from pubsub: %v\n", n.Host.ID().ShortString(), err)
 
 				// attempt fork resolution if the block looks valid but doesn't extend our chain
 				if err.Error() == "block doesn't extend current tip (fork point detected)" {
@@ -1433,8 +1439,8 @@ func (n *Node) pubsubHandler() {
 			} else {
 				// block added successfully
 				flag = true
-				log.Printf("Node %s: Block %s added successfully to chain\n",
-					n.Host.ID().ShortString(), receivedBlock.Hash[:8])
+				// log.Printf("Node %s: Block %s added successfully to chain\n",
+				// 	n.Host.ID().ShortString(), receivedBlock.Hash[:8])
 			}
 		}
 	}
@@ -1442,10 +1448,10 @@ func (n *Node) pubsubHandler() {
 
 // discoverPeers continuously looks for peers using the discovery service.
 func (n *Node) discoverPeers() {
-	log.Printf("Node %s starting peer discovery...\n", n.Host.ID().ShortString())
+	// log.Printf("Node %s starting peer discovery...\n", n.Host.ID().ShortString())
 	peerChan, err := n.Discovery.FindPeers(n.Ctx, n.DiscoveryTag)
 	if err != nil {
-		log.Printf("Node %s: Failed to start peer discovery: %v\n", n.Host.ID().ShortString(), err)
+		// log.Printf("Node %s: Failed to start peer discovery: %v\n", n.Host.ID().ShortString(), err)
 		return
 	}
 
@@ -1455,21 +1461,21 @@ func (n *Node) discoverPeers() {
 			if peerInfo.ID == n.Host.ID() || len(peerInfo.Addrs) == 0 {
 				continue
 			}
-			log.Printf("Node %s: Discovered peer %s\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString())
+			// log.Printf("Node %s: Discovered peer %s\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString())
 			// Attempt connection only if not already connected
 			if n.Host.Network().Connectedness(peerInfo.ID) != network.Connected {
-				log.Printf("Node %s: Attempting connection to %s...\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString())
+				// log.Printf("Node %s: Attempting connection to %s...\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString())
 				if err := n.Host.Connect(n.Ctx, peerInfo); err != nil {
-					log.Printf("Node %s: Error connecting to peer %s: %s\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString(), err)
+					// log.Printf("Node %s: Error connecting to peer %s: %s\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString(), err)
 				} else {
-					log.Printf("Node %s: Connected to peer: %s\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString())
+					// log.Printf("Node %s: Connected to peer: %s\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString())
 					// Optional: Trigger state sync request here after connecting
 				}
 			} else {
 				// log.Printf("Node %s: Already connected to peer %s\n", n.Host.ID().ShortString(), peerInfo.ID.ShortString())
 			}
 		case <-n.Ctx.Done():
-			log.Printf("Node %s: Stopping peer discovery due to context cancellation.\n", n.Host.ID().ShortString())
+			// log.Printf("Node %s: Stopping peer discovery due to context cancellation.\n", n.Host.ID().ShortString())
 			return
 		}
 	}
