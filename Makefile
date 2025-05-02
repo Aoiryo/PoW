@@ -9,7 +9,7 @@ build:
 	go build -C $(PKGNAME)
 
 all: build
-	go test -C $(PKGNAME) -v $(MKARGS)
+	go test -C $(PKGNAME) -v $(MKARGS) --race
 
 docs:
 	cd $(PKGNAME) && go doc -all > pow-doc.txt

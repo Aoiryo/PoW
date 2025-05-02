@@ -58,6 +58,7 @@ Our blockchain system implements a fully decentralized peer-to-peer network with
 3. When transactions exist, the node attempts to find a valid nonce by incrementing and hashing
 4. A block is considered valid when its hash begins with a specified number of zeros (difficulty level)
 5. Successfully mined blocks are added to the local blockchain and broadcast to all peers
+6. A fail buffer is used to resolve out-of-order packet problem and handle the sequence of blocks received correctly
 
 ### Consensus & Fork Resolution
 - **Proof of Work**: Nodes compete to find valid nonces, requiring computational work. For example, if the difficulty level is 2, the node needs to find a nonce such that the hash of the whole block begins with two zeros.
@@ -69,6 +70,7 @@ Our blockchain system implements a fully decentralized peer-to-peer network with
 - **Recovery Protocol**: Nodes joining the network sync with peers to obtain the latest blockchain state. This is implemented using stream handlers. New nodes can set up a stream with an existing node and send a message to request the latest blockchain state. Longest chain will be considered as the correct chain, and the node will update its blockchain to the longest chain using streaming as well. 
 - **Common Ancestor Finding**: Algorithm for efficient chain synchronization from fork points. This is the helper function for synchronizing two chains from different nodes.
 - **Duplicate Detection**: Prevents re-processing of already seen blocks. This is implemented by checking the transaction string and the timestamp of the block. If the block has been seen, it will be discarded.
+- **Fail Buffer**: A temporary storage mechanism implemented in the pubsubHandler that addresses the out-of-order block reception problem in P2P networks. When blocks are received via gossip but cannot be immediately added to the blockchain (typically because their parent blocks haven't arrived yet), they are stored in this buffer rather than being discarded. The system periodically attempts to reprocess blocks from the fail buffer whenever a new block is successfully added to the chain, ensuring that blocks arriving out of sequence are eventually incorporated into the blockchain once their dependencies are satisfied. This mechanism significantly improves chain synchronization efficiency across network partitions and during high network latency scenarios.
 
 ### Peer Communication Protocols (implemented using libp2p and stream handlers)
 - **Block Broadcasting**: Newly mined blocks are broadcast to all peers. 
